@@ -1,4 +1,3 @@
-const { getAllProjects } = require("../controllers/project.controller.js");
 const projectModel = require("../models/project.model.js");
 const mongoose = require("mongoose");
 
