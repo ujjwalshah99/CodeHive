@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import axios from '../config/axios';
+import { initializeSocket , recieveMessage , sendMessage } from "../config/socket";
 
 function ProjectPage() {
   const location = useLocation();
@@ -18,6 +19,8 @@ function ProjectPage() {
   const [newMessage, setNewMessage] = useState('');
 
   useEffect(() => {
+    initializeSocket();
+
     if (initialProject) {
       axios.get(`/projects/get-project/${initialProject._id}`)
         .then((res) => {
@@ -77,14 +80,26 @@ function ProjectPage() {
           <button
             onClick={() => setShowAddModal(true)}
             className="px-4 py-2 bg-white text-indigo-600 text-sm font-semibold rounded-xl shadow hover:bg-gray-100"
-          >+ Add Collaborator</button>
-          <button
-            onClick={() => setShowDetails(!showDetails)}
-            className="flex items-center gap-2 px-4 py-2 bg-white text-indigo-600 text-sm font-semibold rounded-xl shadow hover:bg-gray-100"
           >
-            <span>{project.name}</span>
-            <i className="ri-group-line text-lg" />
+            + Add Collaborator
           </button>
+
+          {showDetails ? (
+            <button
+              onClick={() => setShowDetails(false)}
+              className="px-4 py-2 bg-white text-red-600 text-sm font-semibold rounded-xl shadow hover:bg-gray-100"
+            >
+              ✖ Close
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowDetails(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white text-indigo-600 text-sm font-semibold rounded-xl shadow hover:bg-gray-100"
+            >
+              <span>{project.name}</span>
+              <i className="ri-group-line text-lg" />
+            </button>
+          )}
         </div>
 
         {showDetails ? (
@@ -138,7 +153,9 @@ function ProjectPage() {
                 <button
                   onClick={handleSendMessage}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 text-sm"
-                >Send</button>
+                >
+                  Send
+                </button>
               </div>
             </div>
           </>
@@ -199,11 +216,15 @@ function ProjectPage() {
                   type="button"
                   onClick={() => setShowAddModal(false)}
                   className="px-4 py-2 text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200"
-                >Cancel</button>
+                >
+                  Cancel
+                </button>
                 <button
                   type="submit"
                   className="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700"
-                >Add Selected</button>
+                >
+                  Add Selected
+                </button>
               </div>
             </form>
           </div>
