@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import {useUser} from "../context/user.context"
 import { useLocation } from 'react-router-dom';
 import axios from '../config/axios';
 import { initializeSocket , recieveMessage , sendMessage } from "../config/socket";
@@ -11,6 +12,7 @@ function ProjectPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const {user} = useUser();
   const [messages, setMessages] = useState([
     { id: 1, type: 'incoming', text: 'Hey team, let’s start the discussion!', sender: 'Alice' },
     { id: 2, type: 'outgoing', text: 'Sure, I’m ready.', sender: 'You' },
@@ -19,9 +21,15 @@ function ProjectPage() {
   const [newMessage, setNewMessage] = useState('');
 
   useEffect(() => {
-    initializeSocket();
 
     if (initialProject) {
+
+      initializeSocket(initialProject._id);
+
+      recieveMessage("project-message" , data=> {
+        console.log(data);
+      })
+
       axios.get(`/projects/get-project/${initialProject._id}`)
         .then((res) => {
           const projectData = res.data.project;
@@ -61,13 +69,12 @@ function ProjectPage() {
 
   const handleSendMessage = () => {
     if (!newMessage.trim()) return;
-    const newMsg = {
-      id: messages.length + 1,
-      type: 'outgoing',
-      text: newMessage,
-      sender: 'You'
-    };
-    setMessages([...messages, newMsg]);
+
+    sendMessage("project-message" , {
+      newMessage,
+      sender: user._id
+    })
+
     setNewMessage('');
   };
 
