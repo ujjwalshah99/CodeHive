@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import {useUser} from "../context/user.context"
+import React, { useState, useEffect, useRef } from 'react';
+import { useUser } from "../context/user.context";
 import { useLocation } from 'react-router-dom';
 import axios from '../config/axios';
-import { initializeSocket , recieveMessage , sendMessage } from "../config/socket";
+import { initializeSocket, recieveMessage, sendMessage } from "../config/socket";
 
 function ProjectPage() {
   const location = useLocation();
@@ -12,23 +12,25 @@ function ProjectPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [selectedUserIds, setSelectedUserIds] = useState([]);
-  const {user} = useUser();
-  const [messages, setMessages] = useState([
-    { id: 1, type: 'incoming', text: 'Hey team, let’s start the discussion!', sender: 'Alice' },
-    { id: 2, type: 'outgoing', text: 'Sure, I’m ready.', sender: 'You' },
-    { id: 3, type: 'incoming', text: 'Don’t forget the deadline is Friday.', sender: 'Bob' }
-  ]);
+  const { user } = useUser();
+  const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef(null); // ✅ Ref for auto-scroll
 
   useEffect(() => {
-
     if (initialProject) {
-
       initializeSocket(initialProject._id);
 
-      recieveMessage("project-message" , data=> {
-        console.log(data);
-      })
+      recieveMessage("project-message", (data) => {
+        const ID = `${data?.sender?._id?.toString?.() || "temp"}+${Math.random().toString(12)}`;
+        const tempMessage = {
+          id: ID,
+          type: "incoming",
+          text: data.message,
+          sender: data.sender.name
+        };
+        setMessages((prev) => [...prev, tempMessage]);
+      });
 
       axios.get(`/projects/get-project/${initialProject._id}`)
         .then((res) => {
@@ -47,6 +49,13 @@ function ProjectPage() {
     }
   }, [initialProject]);
 
+  // ✅ Auto scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
   const handleAddCollaborator = () => {
     if (!selectedUserIds.length || !project) return;
 
@@ -54,27 +63,37 @@ function ProjectPage() {
       projectId: project._id,
       users: selectedUserIds
     })
-    .then((res) => {
-      const addedUsers = allUsers.filter((u) => selectedUserIds.includes(u._id));
-      setProject((prev) => ({
-        ...prev,
-        users: [...prev.users, ...addedUsers]
-      }));
-      setAllUsers((prev) => prev.filter((u) => !selectedUserIds.includes(u._id)));
-      setSelectedUserIds([]);
-      setShowAddModal(false);
-    })
-    .catch((err) => console.error('Error adding collaborators:', err));
+      .then((res) => {
+        const addedUsers = allUsers.filter((u) => selectedUserIds.includes(u._id));
+        setProject((prev) => ({
+          ...prev,
+          users: [...prev.users, ...addedUsers]
+        }));
+        setAllUsers((prev) => prev.filter((u) => !selectedUserIds.includes(u._id)));
+        setSelectedUserIds([]);
+        setShowAddModal(false);
+      })
+      .catch((err) => console.error('Error adding collaborators:', err));
   };
 
   const handleSendMessage = () => {
     if (!newMessage.trim()) return;
 
-    sendMessage("project-message" , {
-      newMessage,
-      sender: user._id
-    })
+    sendMessage("project-message", {
+      message: newMessage,
+      sender: user
+    });
 
+    const ID = `${user?._id?.toString?.() || 'temp'}-${Math.random().toString(36)}`;
+
+    const tempMessage = {
+      id: ID,
+      type: "outgoing",
+      text: newMessage,
+      sender: user.name
+    };
+
+    setMessages((prev) => [...prev, tempMessage]);
     setNewMessage('');
   };
 
@@ -134,7 +153,7 @@ function ProjectPage() {
         ) : (
           <>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.map((msg) => (
+              {messages.map((msg) =>
                 msg.type === 'incoming' ? (
                   <div key={msg.id} className="w-fit max-w-[80%] bg-gray-200 p-3 rounded-lg shadow">
                     <p className="text-sm text-gray-700">{msg.text}</p>
@@ -146,7 +165,8 @@ function ProjectPage() {
                     <p className="text-xs text-gray-500 mt-1">{msg.sender}</p>
                   </div>
                 )
-              ))}
+              )}
+              <div ref={messagesEndRef} /> {/* ✅ Scroll target */}
             </div>
             <div className="p-4 border-t border-gray-200">
               <div className="flex items-center gap-2">
