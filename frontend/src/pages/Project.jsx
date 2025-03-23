@@ -3,6 +3,7 @@ import { useUser } from "../context/user.context";
 import { useLocation } from 'react-router-dom';
 import axios from '../config/axios';
 import { initializeSocket, recieveMessage, sendMessage } from "../config/socket";
+import Markdown from 'markdown-to-jsx'
 
 function ProjectPage() {
   const location = useLocation();
@@ -23,6 +24,7 @@ function ProjectPage() {
 
       recieveMessage("project-message", (data) => {
         const ID = `${data?.sender?._id?.toString?.() || "temp"}+${Math.random().toString(12)}`;
+
         const tempMessage = {
           id: ID,
           type: "incoming",
@@ -30,6 +32,7 @@ function ProjectPage() {
           sender: data.sender.name
         };
         setMessages((prev) => [...prev, tempMessage]);
+        
       });
 
       axios.get(`/projects/get-project/${initialProject._id}`)
@@ -97,6 +100,17 @@ function ProjectPage() {
     setNewMessage('');
   };
 
+  const WriteAiMessage = ({ text, key }) => (
+    <div key={key} className="w-full bg-yellow-100 p-3 rounded-lg shadow break-words">
+      <p className="text-xs font-bold text-gray-700 mb-1">AI Assistant</p>
+      <div className="whitespace-pre-wrap break-words overflow-x-auto w-full max-w-full">
+        <Markdown>{text}</Markdown>
+      </div>
+    </div>
+  );
+  
+
+
   if (!project) return <div className="p-6 text-red-500">Loading project...</div>;
 
   return (
@@ -154,15 +168,17 @@ function ProjectPage() {
           <>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {messages.map((msg) =>
-                msg.type === 'incoming' ? (
+                msg.sender === "AI" ? (
+                  <WriteAiMessage key={msg.id} text={msg.text} />
+                ) : msg.type === "incoming" ? (
                   <div key={msg.id} className="w-fit max-w-[80%] bg-gray-200 p-3 rounded-lg shadow">
+                    <p className="text-xs font text-gray-500 mb-1">{msg.sender}</p>
                     <p className="text-sm text-gray-700">{msg.text}</p>
-                    <p className="text-xs text-gray-500 mt-1 text-right">{msg.sender}</p>
                   </div>
                 ) : (
                   <div key={msg.id} className="ml-auto w-fit max-w-[80%] bg-indigo-100 p-3 rounded-lg shadow text-right">
+                    <p className="text-xs font text-gray-500 mb-1">{msg.sender}</p>
                     <p className="text-sm text-gray-700">{msg.text}</p>
-                    <p className="text-xs text-gray-500 mt-1">{msg.sender}</p>
                   </div>
                 )
               )}

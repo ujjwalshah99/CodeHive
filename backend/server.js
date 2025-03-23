@@ -6,6 +6,7 @@ const socketIO = require("socket.io");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const projectModel = require("./models/project.model.js");
+const { generateResult } = require("./services/ai.service.js");
 
 const port = process.env.PORT || 3000;
 
@@ -59,9 +60,30 @@ io.on('connection', socket => {
 
     socket.join(socket.roomId);
 
-    socket.on("project-message" , (data)=> {
+    socket.on("project-message" , async (data)=> {
         console.log(data);
+
+        const message = data.message;
+        const aiIsPresentInMessage = message.startsWith("@ai");
+
         socket.broadcast.to(socket.roomId).emit("project-message" , data);
+
+        if(aiIsPresentInMessage) {
+
+            const prompt = message.replace("@ai" , "");
+            
+            const result = await generateResult(prompt);
+
+            io.to(socket.roomId).emit("project-message" , {
+                message: result,
+                sender : {
+                    _id: "ai",
+                    name : "AI" ,
+                    email : "AI"
+                }
+            })
+            return;
+        }
     })
 
     socket.on('event', data => { /* … */ });

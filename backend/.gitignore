@@ -1,0 +1,64 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs
+*.log
+npm-debug.log
+yarn-debug.log
+pnpm-debug.log
+lerna-debug.log
+.log
+logs/
+*.log
+debug.log*
+pm2.log
+
+# Binaries
+*.exe
+*.out
+*.app
+*.jar
+
+# Database
+*.sqlite
+*.sqlite-journal
+*.db
+dump.rdb
+mongodb-data/
+
+# Build files
+dist/
+build/
+coverage/
+.DS_Store
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.sublime-project
+*.sublime-workspace
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
