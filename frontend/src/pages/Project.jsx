@@ -4,6 +4,84 @@ import { useLocation } from 'react-router-dom';
 import axios from '../config/axios';
 import { initializeSocket, recieveMessage, sendMessage } from "../config/socket";
 import Markdown from 'markdown-to-jsx'
+import hljs from 'highlight.js';
+import 'highlight.js/styles/vs2015.css';
+
+function SyntaxHighlightedCode({ className, children, ...props }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (ref.current) {
+      hljs.highlightElement(ref.current);
+    }
+  }, [children]);
+
+  return (
+    <code ref={ref} className={className} {...props}>
+      {children}
+    </code>
+  );
+}
+
+function WriteAiMessage({ text, key }) {
+  const containerRef = useRef(null);
+  let parsedText;
+
+  try {
+    parsedText = JSON.parse(text);
+  } catch (error) {
+    console.error('Error parsing message:', error);
+    parsedText = { text: 'Error: Invalid message format.' };
+  }
+
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollLeft = containerRef.current.scrollWidth;
+    }
+  }, [parsedText]);
+
+  const isCode = typeof parsedText === 'object' && parsedText.fileTree;
+  const displayText = typeof parsedText === 'object' && parsedText.text ? parsedText.text : parsedText;
+
+  return (
+    <div key={key} className="overflow-auto rounded-lg p-4 shadow-xl border max-w-2xl mx-auto" ref={containerRef}>
+      <p className="text-xs font-semibold mb-2 text-gray-400">AI Assistant</p>
+
+      {/* Display text in yellow box */}
+      {displayText && (
+        <div className="bg-yellow-200 text-black border border-yellow-400 rounded-lg p-2 mb-4">
+          <Markdown
+            children={
+              typeof displayText === 'string'
+                ? displayText
+                : JSON.stringify(displayText, null, 2)
+            }
+          />
+        </div>
+      )}
+
+      {/* Display code block if fileTree exists */}
+      {isCode && (
+        <div className="bg-gray-900 text-white border border-gray-700 rounded-lg p-2">
+          <Markdown
+            children={
+              typeof parsedText.fileTree === 'string'
+                ? parsedText.fileTree
+                : JSON.stringify(parsedText.fileTree, null, 2)
+            }
+            options={{
+              overrides: {
+                code: { component: SyntaxHighlightedCode },
+              },
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 
 function ProjectPage() {
   const location = useLocation();
@@ -16,6 +94,18 @@ function ProjectPage() {
   const { user } = useUser();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [fileTree , setFileTree] = useState({
+    "app.js" : {
+      "file" : {
+        "contents" : ""
+      }
+    },
+    "package.json": {
+      "file": {
+        "contents" : ""
+      }
+    }        
+  })
   const messagesEndRef = useRef(null); // ✅ Ref for auto-scroll
 
   useEffect(() => {
@@ -99,17 +189,7 @@ function ProjectPage() {
     setMessages((prev) => [...prev, tempMessage]);
     setNewMessage('');
   };
-
-  const WriteAiMessage = ({ text, key }) => (
-    <div key={key} className="w-full bg-yellow-100 p-3 rounded-lg shadow break-words">
-      <p className="text-xs font-bold text-gray-700 mb-1">AI Assistant</p>
-      <div className="whitespace-pre-wrap break-words overflow-x-auto w-full max-w-full">
-        <Markdown>{text}</Markdown>
-      </div>
-    </div>
-  );
   
-
 
   if (!project) return <div className="p-6 text-red-500">Loading project...</div>;
 
@@ -205,6 +285,7 @@ function ProjectPage() {
         )}
       </div>
 
+      {/*this is the right section of the page*/}
       <div className="flex-1 p-6 overflow-y-auto">
         <div className="flex justify-center items-center mb-6">
           <h1 className="text-2xl font-bold text-indigo-700 border-b pb-2 w-full text-center">{project.name}</h1>
