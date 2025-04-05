@@ -79,8 +79,8 @@ const model = genAI.getGenerativeModel({
     }
     </example>
 
-    IMPORTANT : don't use file name like routes/index.js
-    IMPORTANT : don't make folders or file inside file , just make simple files
+    IMPORTANT : do not use file names like route/userRoutes.js instead use just the name userRoutes.js
+    IMPORTANT : don't make folders just make single file for a use case like for all routes make a single file routes.js 
 
     `
 });
