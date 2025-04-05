@@ -5,25 +5,10 @@ import axios from '../config/axios';
 import { initializeSocket, recieveMessage, sendMessage } from "../config/socket";
 import Markdown from 'markdown-to-jsx'
 import hljs from 'highlight.js';
-import 'highlight.js/styles/nord.css'; // Changed to nord theme which works better with dark backgrounds
+import 'highlight.js/styles/nord.css'; 
+import { getWebContainer } from '../config/webContainer';
 
-function SyntaxHighlightedCode({ className, children, ...props }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (ref.current) {
-      hljs.highlightElement(ref.current);
-    }
-  }, [children]);
-
-  return (
-    <code ref={ref} className={className} {...props}>
-      {children}
-    </code>
-  );
-}
-
-function WriteAiMessage({ text, key }) {
+function WriteAiMessage({ text }) {
   const containerRef = useRef(null);
   let parsedText;
 
@@ -44,7 +29,7 @@ function WriteAiMessage({ text, key }) {
   const displayText = typeof parsedText === 'object' && parsedText.text ? parsedText.text : parsedText;
 
   return (
-    <div key={key} className="overflow-auto rounded-lg p-4 shadow-xl border max-w-2xl mx-auto" ref={containerRef}>
+    <div className="overflow-auto rounded-lg p-4 shadow-xl border max-w-2xl mx-auto" ref={containerRef}>
       <p className="text-xs font-semibold mb-2 text-gray-400">AI Assistant</p>
 
       {/* Display text in yellow box */}
@@ -94,10 +79,17 @@ function ProjectPage() {
   const [lineNumbers, setLineNumbers] = useState([]);
   const [cursorPosition, setCursorPosition] = useState({ line: 0, ch: 0 });
   const [highlightedContent, setHighlightedContent] = useState("");
+  const [webContainer , setWebContainer] = useState(null);
 
   useEffect(() => {
     if (initialProject) {
       initializeSocket(initialProject._id);
+
+      if(!webContainer) {
+        getWebContainer().then(container => {
+          setWebContainer(container)
+        })
+      }
 
       recieveMessage("project-message", (data) => {
         const ID = `${data?.sender?._id?.toString?.() || "temp"}${Math.random().toString(12)}`;
@@ -349,11 +341,6 @@ function ProjectPage() {
     }
   }, [highlightedCodeRef.current]); // Only run when the highlighted code is updated
 
-  // Filter out buildCommand and startCommand files from display
-  const displayableFiles = Object.keys(fileTree).filter(
-    fileName => fileName !== 'buildCommand' && fileName !== 'startCommand'
-  );
-
   // Replace the renderSyntaxHighlightedEditor function with this improved version
 
   const renderSyntaxHighlightedEditor = () => {
@@ -528,7 +515,11 @@ function ProjectPage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             <ul className="py-2">
-              {displayableFiles.map((fileName) => (
+            <li key="projectName" className="w-full text-left px-4 py-3 bg-gray-900 text-white flex items-center gap-2">
+              <i className="ri-folder-2-line text-gray-400"></i>
+              <span className="text-sm truncate">{project.name}</span>
+            </li>
+              {Object.keys(fileTree).map((fileName) => (
                 <li key={fileName}>
                   <button
                     onClick={() => setSelectedFile(fileName)}

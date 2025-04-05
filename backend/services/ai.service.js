@@ -56,19 +56,18 @@ const model = genAI.getGenerativeModel({
                             }
                         }
                         "
-                    },       
-                },
+                },       
             },
+        },
 
-            "buildCommand" : {
-                mainItem: "npm",
-                commands: [ "install" ]
-            },
+        "buildCommand" : {
+            mainItem: "npm",
+            commands: [ "install" ]
+        },
 
-            "startCommand": {
-                mainItem: "node",
-                commands: [ "app.js" ]
-            }
+        "startCommand": {
+            mainItem: "node",
+            commands: [ "app.js" ]
         }
     }
     </example>
@@ -81,6 +80,7 @@ const model = genAI.getGenerativeModel({
     </example>
 
     IMPORTANT : don't use file name like routes/index.js
+    IMPORTANT : don't make folders or file inside file , just make simple files
 
     `
 });
