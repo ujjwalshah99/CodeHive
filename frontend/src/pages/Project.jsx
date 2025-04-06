@@ -92,6 +92,16 @@ function ProjectPage() {
   // Store reference to current running processes
   const activeProcessRef = useRef(null);
 
+  const consoleOutputRef = useRef(null);
+  //const isEditable = selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file;
+
+
+  useEffect(() => {
+    if (consoleOutputRef.current) {
+      consoleOutputRef.current.scrollTop = consoleOutputRef.current.scrollHeight;
+    }
+  }, [runOutput]);
+
   const resetPreview = () => {
     setRouting('/');
     setIframeUrl(null);
@@ -294,17 +304,25 @@ function ProjectPage() {
 
   // Auto-save file content when it changes
   useEffect(() => {
-    if (debouncedFileContent && selectedFile && fileTree[selectedFile]) {
-      // Update local fileTree
-      const updatedFileTree = { ...fileTree };
-      if (updatedFileTree[selectedFile].file) {
-        updatedFileTree[selectedFile].file.contents = debouncedFileContent;
-        setFileTree(updatedFileTree);
-        
-        console.log(`Auto-saving changes to ${selectedFile}`);
+    try {
+      if (debouncedFileContent && selectedFile && fileTree && fileTree[selectedFile] && fileTree[selectedFile].file) {
+        // Only update if content has changed
+        if (fileTree[selectedFile].file.contents !== debouncedFileContent) {
+          const updatedFileTree = { ...fileTree };
+          updatedFileTree[selectedFile] = { 
+            ...fileTree[selectedFile],
+            file: {
+              ...fileTree[selectedFile].file,
+              contents: debouncedFileContent
+            }
+          };
+          setFileTree(updatedFileTree);
+        }
       }
+    } catch (error) {
+      console.error("Error in auto-save:", error);
     }
-  }, [debouncedFileContent, selectedFile]);
+  }, [debouncedFileContent]);
 
   // Auto scroll to bottom when messages change
   useEffect(() => {
@@ -313,43 +331,53 @@ function ProjectPage() {
     }
   }, [messages]);
 
-  // Set initial file content when component mounts or selected file changes
-  // Set initial file content when component mounts or selected file changes
   useEffect(() => {
-    if (selectedFile && fileTree) {
-      console.log(`Loading file: ${selectedFile}`, fileTree);
-      
-      if (fileTree[selectedFile]) {
-        // Check if it's a file (not a directory)
-        if (fileTree[selectedFile].file) {
-          console.log(`Loading content for ${selectedFile}:`, fileTree[selectedFile].file.contents);
-          console.log(fileTree);
+    try {
+      if (selectedFile && fileTree) {
+        if (fileTree[selectedFile] && fileTree[selectedFile].file) {
+          // Set file content from file tree
           setFileContent(fileTree[selectedFile].file.contents || "");
         } else {
-          // It's a directory, not a file
-          console.log(`${selectedFile} is a directory, not a file`);
+          // Handle directories or non-existent files
           setFileContent("");
         }
-      } else {
-        console.warn(`File ${selectedFile} doesn't exist in the file tree`, fileTree);
-        setFileContent("");
       }
+    } catch (error) {
+      console.error("Error loading file content:", error);
+      setFileContent(""); // Reset content on error
     }
   }, [selectedFile, fileTree]);
   
-  // Add a proper file selection handler function
+  // 3. Completely revise the file selection handler
   const handleFileSelect = (fileName) => {
-    // Save current file before switching
+    // Don't do anything if selecting the same file
+    if (fileName === selectedFile) return;
+    
+    // First save the current file content
     if (selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file) {
-      const updatedFileTree = { ...fileTree };
-      updatedFileTree[selectedFile].file.contents = fileContent;
+      // Create a new copy of the file tree (use a safer approach)
+      const updatedFileTree = {};
+      
+      // Copy all properties without mutation
+      Object.keys(fileTree).forEach(key => {
+        updatedFileTree[key] = { ...fileTree[key] };
+        if (fileTree[key].file) {
+          updatedFileTree[key].file = { ...fileTree[key].file };
+        }
+      });
+      
+      // Only update the current file's content
+      if (updatedFileTree[selectedFile] && updatedFileTree[selectedFile].file) {
+        updatedFileTree[selectedFile].file.contents = fileContent;
+      }
+      
+      // Update the file tree
       setFileTree(updatedFileTree);
     }
     
-    // Set the new selected file
+    // Now update the selected file
     setSelectedFile(fileName);
-    setFileContent(fileTree[fileName] || '');
-  };
+  }
 
   // Check viewport size and adjust sidebar visibility
   useEffect(() => {
@@ -619,13 +647,6 @@ function ProjectPage() {
   // Handle code changes
   const handleCodeChange = (value) => {
     setFileContent(value);
-    
-    // Update the file in fileTree immediately for navigation between files
-    if (selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file) {
-      const updatedFileTree = { ...fileTree };
-      updatedFileTree[selectedFile].file.contents = value;
-      setFileTree(updatedFileTree);
-    }
   };
   
   // Handle route change for iframe preview
@@ -904,6 +925,7 @@ function ProjectPage() {
               </div>
               
               {/* Code editor */}
+              
               <div className="flex-1 overflow-hidden">
                 <div className="h-full overflow-auto">
                   <CodeMirror
@@ -1025,7 +1047,10 @@ function ProjectPage() {
                 
                 <div className="flex-1 flex overflow-hidden">
                   {/* Console Output */}
-                  <div className="flex-1 p-2 font-mono text-xs overflow-auto whitespace-pre-wrap">
+                  <div 
+                    ref={consoleOutputRef}
+                    className="flex-1 p-2 font-mono text-xs overflow-auto whitespace-pre-wrap"
+                  >
                     {runOutput}
                   </div>
                   
