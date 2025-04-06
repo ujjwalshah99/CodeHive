@@ -3,21 +3,35 @@ import { useUser } from "../context/user.context";
 import { useLocation } from 'react-router-dom';
 import axios from '../config/axios';
 import { initializeSocket, recieveMessage, sendMessage } from "../config/socket";
-import Markdown from 'markdown-to-jsx'
-import hljs from 'highlight.js';
-import 'highlight.js/styles/nord.css'; 
+import Markdown from 'markdown-to-jsx';
+import CodeMirror from '@uiw/react-codemirror';
+import { javascript } from '@codemirror/lang-javascript';
+import { dracula } from '@uiw/codemirror-theme-dracula';
 import { getWebContainer } from '../config/webContainer';
 
 function WriteAiMessage({ text }) {
   const containerRef = useRef(null);
-  let parsedText;
-
-  try {
-    parsedText = JSON.parse(text);
-  } catch (error) {
-    console.error('Error parsing message:', error);
-    parsedText = { text: 'Error: Invalid message format.' };
-  }
+  const [parsedText, setParsedText] = useState({ text: '' });
+  
+  useEffect(() => {
+    try {
+      // Handle different formats of AI messages
+      if (typeof text === 'string') {
+        try {
+          const parsed = JSON.parse(text);
+          setParsedText(parsed);
+        } catch (error) {
+          // If not valid JSON, just use as text
+          setParsedText({ text: text });
+        }
+      } else {
+        setParsedText(text);
+      }
+    } catch (error) {
+      console.error('Error parsing message:', error);
+      setParsedText({ text: 'Error: Invalid message format.' });
+    }
+  }, [text]);
 
   useEffect(() => {
     if (containerRef.current) {
@@ -30,11 +44,11 @@ function WriteAiMessage({ text }) {
 
   return (
     <div className="overflow-auto rounded-lg p-3 md:p-4 shadow-xl border max-w-full md:max-w-2xl mx-auto" ref={containerRef}>
-      <p className="text-xs font-semibold mb-2 text-gray-400">AI Assistant</p>
+      <p className="text-xs font-semibold mb-2 text-gray-500">AI Assistant</p>
 
       {/* Display text in yellow box */}
       {displayText && (
-        <div className="bg-yellow-200 text-black border border-yellow-400 rounded-lg p-2 mb-2 overflow-x-auto">
+        <div className="bg-yellow-100 text-black border border-yellow-300 rounded-lg p-3 mb-2 overflow-x-auto">
           <Markdown
             children={
               typeof displayText === 'string'
@@ -54,8 +68,10 @@ function ProjectPage() {
   const [project, setProject] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const [selectedRemoveUserIds, setSelectedRemoveUserIds] = useState([]);
   const { user } = useUser();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -63,24 +79,119 @@ function ProjectPage() {
   const [selectedFile, setSelectedFile] = useState("app.js");
   const [fileContent, setFileContent] = useState("");
   const messagesEndRef = useRef(null);
-  const highlightedCodeRef = useRef(null);
-  const [lineNumbers, setLineNumbers] = useState([]);
-  const [highlightedContent, setHighlightedContent] = useState("");
   const [webContainer, setWebContainer] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [runOutput, setRunOutput] = useState("");
   const [showFileSidebar, setShowFileSidebar] = useState(true);
   const [showChatSidebar, setShowChatSidebar] = useState(true);
+  const [iframeUrl, setIframeUrl] = useState(null);
+  const [routing, setRouting] = useState('/');
+  const editorRef = useRef(null);
+  
+  // Store reference to current running processes
+  const activeProcessRef = useRef(null);
+  
+  // Debounce function for autosave
+  const useDebounce = (value, delay) => {
+    const [debouncedValue, setDebouncedValue] = useState(value);
+    
+    useEffect(() => {
+      const handler = setTimeout(() => {
+        setDebouncedValue(value);
+      }, delay);
+      
+      return () => {
+        clearTimeout(handler);
+      };
+    }, [value, delay]);
+    
+    return debouncedValue;
+  };
+  
+  // Debounced file content for autosave
+  const debouncedFileContent = useDebounce(fileContent, 1000);
+
+  // Kill any active process
+  const killActiveProcess = async () => {
+    if (activeProcessRef.current) {
+      try {
+        setRunOutput(prev => prev + "\nStopping previous process...\n");
+        await activeProcessRef.current.kill();
+        activeProcessRef.current = null;
+        setRunOutput(prev => prev + "Previous process terminated successfully.\n");
+        return true;
+      } catch (error) {
+        console.error("Error killing process:", error);
+        setRunOutput(prev => prev + `Error stopping previous process: ${error.message}\n`);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Process and validate fileTree
+  const processFileTree = (rawFileTree) => {
+    const processedTree = { ...rawFileTree };
+    
+    // Make sure package.json is valid JSON if it exists
+    if (processedTree["package.json"] && processedTree["package.json"].file) {
+      try {
+        // Try to parse as JSON to validate
+        JSON.parse(processedTree["package.json"].file.contents);
+      } catch (e) {
+        // If it's not valid JSON, create a basic valid package.json
+        console.warn("Invalid package.json detected, creating a default one");
+        processedTree["package.json"].file.contents = JSON.stringify({
+          "name": "web-project",
+          "version": "1.0.0",
+          "description": "Web project",
+          "main": "app.js",
+          "scripts": {
+            "start": "node app.js",
+            "test": "echo \"Error: no test specified\" && exit 1"
+          },
+          "dependencies": {
+            "express": "^4.18.2"
+          }
+        }, null, 2);
+      }
+    } else {
+      // If package.json doesn't exist, create it
+      processedTree["package.json"] = {
+        file: {
+          contents: JSON.stringify({
+            "name": "web-project",
+            "version": "1.0.0",
+            "description": "Web project",
+            "main": "app.js",
+            "scripts": {
+              "start": "node app.js",
+              "test": "echo \"Error: no test specified\" && exit 1"
+            },
+            "dependencies": {
+              "express": "^4.18.2"
+            }
+          }, null, 2)
+        }
+      };
+    }
+    
+    return processedTree;
+  };
 
   useEffect(() => {
     if (initialProject) {
       initializeSocket(initialProject._id);
 
-      if(!webContainer) {
+      // Initialize WebContainer only once
+      if (!webContainer) {
         getWebContainer().then(container => {
-          setWebContainer(container)
-          console.log("container started");
-        })
+          setWebContainer(container);
+          console.log("Web container started");
+        }).catch(error => {
+          console.error("Failed to start web container:", error);
+          setRunOutput("Failed to initialize web container: " + error.message);
+        });
       }
 
       recieveMessage("project-message", (data) => {
@@ -89,18 +200,33 @@ function ProjectPage() {
         // Check if message is from AI and try to parse JSON
         if (data.sender.name === "AI") {
           try {
-            const parsedMessage = JSON.parse(data.message);
+            let parsedMessage;
+            if (typeof data.message === 'string') {
+              parsedMessage = JSON.parse(data.message);
+            } else {
+              parsedMessage = data.message;
+            }
             
             // If the message contains a fileTree, update the fileTree state
             if (parsedMessage.fileTree) {
-              setFileTree(parsedMessage.fileTree);
-              webContainer?.mount(parsedMessage.fileTree);
+              const validatedFileTree = processFileTree(parsedMessage.fileTree);
+              setFileTree(validatedFileTree);
+              
+              // Kill any running process before mounting new files
+              killActiveProcess().then(() => {
+                // Mount files to webContainer when available
+                if (webContainer) {
+                  console.log("Mounting file tree:", validatedFileTree);
+                  webContainer.mount(validatedFileTree).catch(err => {
+                    console.error("Error mounting file tree:", err);
+                    setRunOutput(prev => prev + `\nError mounting files: ${err.message}\n`);
+                  });
+                }
+              });
               
               // If the currently selected file exists in the new fileTree, update its content
-              if (selectedFile && parsedMessage.fileTree[selectedFile] && parsedMessage.fileTree[selectedFile].file) {
-                setFileContent(parsedMessage.fileTree[selectedFile].file.contents);
-                updateLineNumbers(parsedMessage.fileTree[selectedFile].file.contents);
-                updateHighlightedContent(parsedMessage.fileTree[selectedFile].file.contents);
+              if (selectedFile && validatedFileTree[selectedFile] && validatedFileTree[selectedFile].file) {
+                setFileContent(validatedFileTree[selectedFile].file.contents);
               }
             }
           } catch (e) {
@@ -117,22 +243,49 @@ function ProjectPage() {
         setMessages((prev) => [...prev, tempMessage]);
       });
 
-      axios.get(`/projects/get-project/${initialProject._id}`)
-        .then((res) => {
-          const projectData = res.data.project;
-          setProject(projectData);
-
-          axios.get('/users/all')
-            .then((userRes) => {
-              const filteredUsers = userRes.data.users.filter(
-                (user) => !projectData.users.some((u) => u._id === user._id)
-              );
-              setAllUsers(filteredUsers);
-            });
-        })
-        .catch((err) => console.error('Error fetching project data:', err));
+      // Fetch project data and users
+      fetchProjectData(initialProject._id);
     }
+    
+    // Cleanup function to kill any active processes on unmount
+    return () => {
+      killActiveProcess();
+    };
   }, [initialProject]);
+  
+  // Function to fetch project data
+  const fetchProjectData = (projectId) => {
+    axios.get(`/projects/get-project/${projectId}`)
+      .then((res) => {
+        const projectData = res.data.project;
+        setProject(projectData);
+
+        // Fetch all users who are not already collaborators
+        axios.get('/users/all')
+          .then((userRes) => {
+            const filteredUsers = userRes.data.users.filter(
+              (user) => !projectData.users.some((u) => u._id === user._id)
+            );
+            setAllUsers(filteredUsers);
+          })
+          .catch(err => console.error('Error fetching users:', err));
+      })
+      .catch((err) => console.error('Error fetching project data:', err));
+  };
+
+  // Auto-save file content when it changes
+  useEffect(() => {
+    if (debouncedFileContent && selectedFile && fileTree[selectedFile]) {
+      // Update local fileTree
+      const updatedFileTree = { ...fileTree };
+      if (updatedFileTree[selectedFile].file) {
+        updatedFileTree[selectedFile].file.contents = debouncedFileContent;
+        setFileTree(updatedFileTree);
+        
+        console.log(`Auto-saving changes to ${selectedFile}`);
+      }
+    }
+  }, [debouncedFileContent, selectedFile]);
 
   // Auto scroll to bottom when messages change
   useEffect(() => {
@@ -146,8 +299,9 @@ function ProjectPage() {
     if (selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file) {
       const content = fileTree[selectedFile].file.contents;
       setFileContent(content);
-      updateLineNumbers(content);
-      updateHighlightedContent(content);
+    } else {
+      // If file doesn't exist or doesn't have content, set empty content
+      setFileContent("");
     }
   }, [selectedFile, fileTree]);
 
@@ -173,50 +327,10 @@ function ProjectPage() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Function to highlight code with highlight.js
-  const updateHighlightedContent = (content) => {
-    try {
-      const language = getLanguageForFile(selectedFile);
-      let highlighted = hljs.highlight(content, { language }).value;
-      
-      // Add additional custom CSS classes for better dark theme visibility
-      highlighted = highlighted.replace(/<span class="hljs-/g, '<span class="hljs-dark-theme hljs-');
-      
-      setHighlightedContent(highlighted);
-    } catch (error) {
-      console.error('Error highlighting code:', error);
-      setHighlightedContent(content);
-    }
-  };
-
-  // Function to generate line numbers
-  const updateLineNumbers = (content) => {
-    const lines = content.split('\n').length;
-    setLineNumbers(Array.from({ length: lines }, (_, i) => i + 1));
-  };
-
-  // Function to determine language based on file extension
-  const getLanguageForFile = (filename) => {
-    const extension = filename.split('.').pop().toLowerCase();
-    const languageMap = {
-      'js': 'javascript',
-      'jsx': 'javascript',
-      'ts': 'typescript',
-      'tsx': 'typescript',
-      'html': 'html',
-      'css': 'css',
-      'json': 'json',
-      'py': 'python',
-      'java': 'java',
-      'rb': 'ruby',
-      'php': 'php',
-      'go': 'go',
-      'rust': 'rust',
-      'c': 'c',
-      'cpp': 'cpp',
-      'md': 'markdown'
-    };
-    return languageMap[extension] || 'plaintext';
+  // Function to determine language extension for CodeMirror
+  const getLanguageExtension = (filename) => {
+    // Only use JavaScript for now
+    return javascript();
   };
 
   const handleAddCollaborator = () => {
@@ -237,6 +351,26 @@ function ProjectPage() {
         setShowAddModal(false);
       })
       .catch((err) => console.error('Error adding collaborators:', err));
+  };
+  
+  const handleRemoveCollaborator = () => {
+    if (!selectedRemoveUserIds.length || !project) return;
+    
+    axios.put('/projects/remove-user', {
+      projectId: project._id,
+      users: selectedRemoveUserIds
+    })
+      .then((res) => {
+        const removedUsers = project.users.filter((u) => selectedRemoveUserIds.includes(u._id));
+        setProject((prev) => ({
+          ...prev,
+          users: prev.users.filter((u) => !selectedRemoveUserIds.includes(u._id))
+        }));
+        setAllUsers((prev) => [...prev, ...removedUsers]);
+        setSelectedRemoveUserIds([]);
+        setShowRemoveModal(false);
+      })
+      .catch((err) => console.error('Error removing collaborators:', err));
   };
 
   const handleSendMessage = () => {
@@ -266,70 +400,160 @@ function ProjectPage() {
       return;
     }
 
+    // Kill any existing process before starting a new one
+    const killSuccess = await killActiveProcess();
+    if (!killSuccess) return;
+
     setIsRunning(true);
     setRunOutput("Running code...\n");
+    setIframeUrl(null); // Reset iframe URL
 
     try {
+      // Make sure fileTree is up to date with latest editor changes
+      const updatedFileTree = { ...fileTree };
+      if (updatedFileTree[selectedFile] && updatedFileTree[selectedFile].file) {
+        updatedFileTree[selectedFile].file.contents = fileContent;
+      }
       
-      webContainer?.mount(fileTree);
-      const installProcess = await webContainer.spawn("npm" , ["install"]);
-
-      installProcess.output.pipeTo(new WritableStream({
-        write(chunk) {
-          console.log(chunk);
+      // Check if package.json is valid
+      if (!updatedFileTree["package.json"] || !updatedFileTree["package.json"].file) {
+        // Create a default package.json
+        updatedFileTree["package.json"] = {
+          file: {
+            contents: JSON.stringify({
+              "name": "web-project",
+              "version": "1.0.0",
+              "description": "Web project",
+              "main": "app.js",
+              "scripts": {
+                "start": "node app.js",
+                "test": "echo \"Error: no test specified\" && exit 1"
+              },
+              "dependencies": {
+                "express": "^4.18.2"
+              }
+            }, null, 2)
+          }
+        };
+        setFileTree(updatedFileTree); // Update the file tree with the package.json
+      } else {
+        try {
+          // Validate package.json is proper JSON
+          const packageContent = updatedFileTree["package.json"].file.contents;
+          JSON.parse(packageContent);
+        } catch (e) {
+          setRunOutput(prev => prev + `\nError: package.json is not valid JSON. Creating default package.json...\n`);
+          updatedFileTree["package.json"].file.contents = JSON.stringify({
+            "name": "web-project",
+            "version": "1.0.0",
+            "description": "Web project",
+            "main": "app.js",
+            "scripts": {
+              "start": "node app.js",
+              "test": "echo \"Error: no test specified\" && exit 1"
+            },
+            "dependencies": {
+              "express": "^4.18.2"
+            }
+          }, null, 2);
+          setFileTree(updatedFileTree);
         }
-      }))
+      }
+      
+      // Make sure app.js exists
+      if (!updatedFileTree["app.js"] || !updatedFileTree["app.js"].file) {
+        updatedFileTree["app.js"] = {
+          file: {
+            contents: `const express = require('express');
+const app = express();
+const port = 3111;
 
-      const runProcess = await webContainer.spawn("npm" , ["start"]);
+app.use(express.static('public'));
+app.use(express.json());
 
-      runProcess.output.pipeTo(new WritableStream({
+app.get('/', (req, res) => {
+  res.send('<h1>Welcome to the Web Project</h1>');
+});
+
+app.listen(port, () => {
+  console.log(\`Server running at http://localhost:\${port}\`);
+});`
+          }
+        };
+        setFileTree(updatedFileTree);
+      }
+      
+      // Log out fileTree for debugging
+      console.log("Mounting file tree before run:", updatedFileTree);
+      setRunOutput(prev => prev + `Preparing files for execution...\n`);
+      
+      // Mount the files to the web container
+      await webContainer.mount(updatedFileTree);
+      
+      // Install dependencies
+      setRunOutput(prev => prev + "Installing dependencies...\n");
+      const installProcess = await webContainer.spawn("npm", ["install"]);
+      activeProcessRef.current = installProcess;
+      
+      const installOutput = [];
+      await installProcess.output.pipeTo(new WritableStream({
         write(chunk) {
-          console.log(chunk);
+          installOutput.push(chunk);
+          setRunOutput(prev => prev + chunk);
         }
-      }))
-
-      setIsRunning(false);
-
+      }));
+      
+      // Start the application
+      setRunOutput(prev => prev + "\nStarting application...\n");
+      const runProcess = await webContainer.spawn("npm", ["start"]);
+      activeProcessRef.current = runProcess;
+      
+      await runProcess.output.pipeTo(new WritableStream({
+        write(chunk) {
+          setRunOutput(prev => prev + chunk);
+        }
+      }));
+      
+      // Listen for server ready event
+      webContainer.on("server-ready", (port, url) => {
+        setIframeUrl(url);
+        setRunOutput(prev => prev + `\nServer running at: ${url}\n`);
+        console.log("Server ready:", port, url);
+      });
+      
     } catch (error) {
-      setRunOutput(`Error starting execution: ${error.message}`);
+      setRunOutput(prev => prev + `\nError: ${error.message}\n`);
+      console.error("Runtime error:", error);
+    } finally {
       setIsRunning(false);
     }
   };
-
-  // Render read-only syntax highlighted code
-  const renderSyntaxHighlightedEditor = () => {
-    const language = getLanguageForFile(selectedFile);
+  
+  // Handle code changes
+  const handleCodeChange = (value) => {
+    setFileContent(value);
     
-    return (
-      <div className="flex-1 overflow-hidden relative">
-        {/* Line numbers container */}
-        <div className="absolute left-0 top-0 bottom-0 w-10 md:w-12 bg-gray-900 border-r border-gray-700 flex flex-col items-end pt-4 overflow-hidden z-10">
-          {lineNumbers.map((num) => (
-            <div key={num} className="text-gray-500 text-xs pr-2 h-6 leading-6">{num}</div>
-          ))}
-        </div>
-        
-        {/* Visible syntax highlighted code */}
-        <pre className="ml-10 md:ml-12 w-full h-full overflow-auto bg-gray-900 p-2 md:p-4 m-0 z-10">
-          <code 
-            ref={highlightedCodeRef}
-            className={`language-${language} font-mono text-sm leading-6`}
-            style={{ 
-              background: 'transparent',
-              color: '#e2e8f0',
-              whiteSpace: 'pre',
-              display: 'inline-block',
-              minWidth: '100%'
-            }}
-            dangerouslySetInnerHTML={{ __html: highlightedContent }}
-          />
-        </pre>
-      </div>
-    );
+    // Update the file in fileTree immediately for navigation between files
+    if (selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file) {
+      const updatedFileTree = { ...fileTree };
+      updatedFileTree[selectedFile].file.contents = value;
+      setFileTree(updatedFileTree);
+    }
+  };
+  
+  // Handle route change for iframe preview
+  const handleRouteChange = (e) => {
+    e.preventDefault();
+    if (!iframeUrl) return;
+    
+    // Extract base URL and add the new route
+    const baseUrl = iframeUrl.split('?')[0].replace(/\/$/, '');
+    const newUrl = `${baseUrl}${routing.startsWith('/') ? routing : `/${routing}`}`;
+    setIframeUrl(newUrl);
   };
 
   if (!project) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="p-6 bg-white rounded-xl shadow-md">
         <div className="flex items-center space-x-3">
           <svg className="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -343,7 +567,7 @@ function ProjectPage() {
   );
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100 overflow-hidden">
+    <div className="flex flex-col h-screen bg-gray-50 overflow-hidden">
       {/* Mobile navigation bar */}
       <div className="md:hidden flex items-center justify-between bg-indigo-700 text-white p-3 shadow-md">
         <button 
@@ -351,7 +575,7 @@ function ProjectPage() {
             setShowChatSidebar(true);
             setShowFileSidebar(false);
           }}
-          className={`px-3 py-1 rounded-lg ${showChatSidebar ? 'bg-indigo-900' : 'bg-indigo-800'}`}>
+          className={`px-3 py-1 rounded-lg ${showChatSidebar ? 'bg-indigo-900' : 'bg-indigo-800'} transition-colors`}>
           <i className="ri-chat-3-line mr-1"></i> Chat
         </button>
         <div className="font-medium truncate mx-2">{project.name}</div>
@@ -360,7 +584,7 @@ function ProjectPage() {
             setShowChatSidebar(false);
             setShowFileSidebar(true);
           }}
-          className={`px-3 py-1 rounded-lg ${showFileSidebar ? 'bg-indigo-900' : 'bg-indigo-800'}`}>
+          className={`px-3 py-1 rounded-lg ${showFileSidebar ? 'bg-indigo-900' : 'bg-indigo-800'} transition-colors`}>
           <i className="ri-code-line mr-1"></i> Code
         </button>
       </div>
@@ -368,26 +592,34 @@ function ProjectPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar - Chat & Collaborator Section */}
         {showChatSidebar && (
-          <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col md:min-w-[300px] md:max-w-md">
-            <div className="flex items-center justify-between p-3 md:p-4 bg-indigo-600 text-white shadow-md">
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="px-3 py-1 md:px-4 md:py-2 bg-white text-indigo-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-100"
-              >
-                + Add Collaborator
-              </button>
+          <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col md:min-w-[320px] md:max-w-md shadow-md">
+            <div className="flex items-center justify-between p-3 md:p-4 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-md">
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="px-3 py-1 md:px-4 md:py-2 bg-white text-indigo-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-50 transition-colors"
+                >
+                  <i className="ri-user-add-line mr-1"></i> Add
+                </button>
+                <button
+                  onClick={() => setShowRemoveModal(true)}
+                  className="px-3 py-1 md:px-4 md:py-2 bg-white text-red-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-50 transition-colors"
+                >
+                  <i className="ri-user-unfollow-line mr-1"></i> Remove
+                </button>
+              </div>
 
               {showDetails ? (
                 <button
                   onClick={() => setShowDetails(false)}
-                  className="px-3 py-1 md:px-4 md:py-2 bg-white text-red-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-100"
+                  className="px-3 py-1 md:px-4 md:py-2 bg-white text-red-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-50 transition-colors"
                 >
-                  ✖ Close
+                  <i className="ri-close-line mr-1"></i> Close
                 </button>
               ) : (
                 <button
                   onClick={() => setShowDetails(true)}
-                  className="flex items-center gap-1 md:gap-2 px-3 py-1 md:px-4 md:py-2 bg-white text-indigo-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-100"
+                  className="flex items-center gap-1 md:gap-2 px-3 py-1 md:px-4 md:py-2 bg-white text-indigo-600 text-xs md:text-sm font-semibold rounded-lg shadow hover:bg-gray-50 transition-colors"
                 >
                   <span className="truncate max-w-[100px] md:max-w-[120px]">{project.name}</span>
                   <i className="ri-group-line text-base md:text-lg" />
@@ -396,29 +628,38 @@ function ProjectPage() {
               
               {/* Mobile only close button */}
               <button 
-                className="md:hidden ml-1 text-white"
+                className="md:hidden ml-1 text-white hover:text-gray-200 transition-colors"
                 onClick={() => setShowChatSidebar(false)}>
                 <i className="ri-close-line text-xl"></i>
               </button>
             </div>
 
             {showDetails ? (
-              <div className="flex-1 overflow-y-auto p-3 md:p-4 bg-gray-50">
-                <h3 className="text-lg md:text-xl font-bold text-indigo-700 mb-3 md:mb-4">📁 Project Details</h3>
-                <div className="mb-3 md:mb-4">
-                  <p className="text-xs md:text-sm text-gray-500">Project Name</p>
-                  <div className="bg-white border px-3 py-2 md:px-4 md:py-2 rounded-xl shadow-sm">{project.name}</div>
+              <div className="flex-1 overflow-y-auto p-4 md:p-5 bg-gray-50">
+                <h3 className="text-lg md:text-xl font-bold text-indigo-700 mb-4 flex items-center gap-2">
+                  <i className="ri-folder-info-line"></i> Project Details
+                </h3>
+                <div className="mb-4 md:mb-5">
+                  <p className="text-xs md:text-sm text-gray-500 mb-1 font-medium">Project Name</p>
+                  <div className="bg-white border px-4 py-3 rounded-lg shadow-sm">{project.name}</div>
                 </div>
                 <div>
-                  <p className="text-xs md:text-sm text-gray-500">Collaborators</p>
-                  <ul className="space-y-2 md:space-y-3 mt-2">
+                  <p className="text-xs md:text-sm text-gray-500 mb-2 font-medium flex items-center gap-1">
+                    <i className="ri-team-line"></i> Collaborators ({project.users.length})
+                  </p>
+                  <ul className="space-y-3 mt-2">
                     {project.users.map((user, idx) => (
-                      <li key={idx} className="flex items-center gap-2 md:gap-3 bg-white border px-3 py-2 md:px-4 md:py-2 rounded-xl shadow-sm">
-                        <i className="ri-user-line text-base md:text-lg text-indigo-600" />
-                        <div>
-                          <p className="text-xs md:text-sm font-medium text-gray-800">{user.name || `User ${idx + 1}`}</p>
+                      <li key={idx} className="flex items-center gap-3 bg-white border px-4 py-3 rounded-lg shadow-sm hover:shadow transition-shadow">
+                        <div className="bg-indigo-100 text-indigo-700 p-2 rounded-full">
+                          <i className="ri-user-line text-base md:text-lg" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-gray-800">{user.name || `User ${idx + 1}`}</p>
                           <p className="text-xs text-gray-500">{user.email}</p>
                         </div>
+                        {user._id === project.owner && (
+                          <span className="px-2 py-1 bg-indigo-100 text-indigo-700 text-xs rounded-full">Owner</span>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -426,25 +667,25 @@ function ProjectPage() {
               </div>
             ) : (
               <>
-                <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4">
+                <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-4 md:space-y-5 bg-gray-50">
                   {messages.map((msg) =>
                     msg.sender === "AI" ? (
                       <WriteAiMessage key={msg.id} text={msg.text} />
                     ) : msg.type === "incoming" ? (
-                      <div key={msg.id} className="w-fit max-w-[80%] bg-gray-200 p-2 md:p-3 rounded-lg shadow">
-                        <p className="text-xs text-gray-500 mb-1">{msg.sender}</p>
-                        <p className="text-xs md:text-sm text-gray-700">{msg.text}</p>
+                      <div key={msg.id} className="w-fit max-w-[85%] bg-white p-3 md:p-4 rounded-lg shadow-sm border-l-4 border-gray-300">
+                        <p className="text-xs text-gray-500 mb-1 font-medium">{msg.sender}</p>
+                        <p className="text-sm text-gray-700">{msg.text}</p>
                       </div>
                     ) : (
-                      <div key={msg.id} className="ml-auto w-fit max-w-[80%] bg-indigo-100 p-2 md:p-3 rounded-lg shadow text-right">
-                        <p className="text-xs text-gray-500 mb-1">{msg.sender}</p>
-                        <p className="text-xs md:text-sm text-gray-700">{msg.text}</p>
+                      <div key={msg.id} className="ml-auto w-fit max-w-[85%] bg-indigo-50 p-3 md:p-4 rounded-lg shadow-sm text-right border-r-4 border-indigo-300">
+                        <p className="text-xs text-gray-500 mb-1 font-medium">{msg.sender}</p>
+                        <p className="text-sm text-gray-700">{msg.text}</p>
                       </div>
                     )
                   )}
                   <div ref={messagesEndRef} />
                 </div>
-                <div className="p-3 md:p-4 border-t border-gray-200">
+                <div className="p-3 md:p-4 border-t border-gray-200 bg-white">
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
@@ -452,12 +693,16 @@ function ProjectPage() {
                       onChange={(e) => setNewMessage(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                       placeholder="Type your message..."
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 text-xs md:text-sm"
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm transition-shadow"
                     />
                     <button
                       onClick={handleSendMessage}
-                      className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-xs md:text-sm"
+                      disabled={!newMessage.trim()}
+                      className={`px-4 py-2 rounded-lg text-white text-sm flex items-center gap-1 ${
+                        !newMessage.trim() ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'
+                      } transition-colors`}
                     >
+                      <i className="ri-send-plane-fill"></i>
                       Send
                     </button>
                   </div>
@@ -471,161 +716,303 @@ function ProjectPage() {
         {showFileSidebar && (
           <div className="flex-1 flex flex-col h-full md:flex-row overflow-hidden">
             {/* File list sidebar */}
-            <div className="w-full md:w-56 lg:w-64 bg-gray-900 text-white border-r border-gray-700 flex flex-col overflow-hidden">
-              <div className="p-3 md:p-4 border-b border-gray-700 flex justify-between items-center">
-                <h2 className="text-base md:text-lg font-semibold truncate">Project Files</h2>
-                {/* Mobile only close button */}
+            <div className="w-full md:w-56 lg:w-64 bg-gray-800 text-white border-r border-gray-700 flex flex-col overflow-hidden">
+            <div className="p-3 md:p-4 border-b border-gray-700 flex justify-between items-center">
+                <h3 className="font-semibold text-sm">Files</h3>
                 <button 
-                  className="md:hidden text-gray-400 hover:text-white"
+                  className="md:hidden text-gray-400 hover:text-white transition-colors"
                   onClick={() => setShowFileSidebar(false)}>
                   <i className="ri-close-line text-xl"></i>
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto">
-                <ul className="py-1 md:py-2">
-                  <li key="projectName" className="w-full text-left px-3 py-2 md:px-4 md:py-3 bg-gray-900 text-white flex items-center gap-2">
-                    <i className="ri-folder-2-line text-gray-400"></i>
-                    <span className="text-xs md:text-sm truncate">{project.name}</span>
-                  </li>
+              <div className="flex-1 overflow-y-auto p-2">
+                <ul className="space-y-1">
                   {Object.keys(fileTree).map((fileName) => (
-                    <li key={fileName}>
-                      <button
-                        onClick={() => setSelectedFile(fileName)}
-                        className={`w-full text-left px-3 py-2 md:px-4 md:py-3 hover:bg-gray-800 flex items-center gap-2 transition-colors duration-150 ${
-                          selectedFile === fileName ? 'bg-gray-800 border-l-4 border-indigo-400' : ''
-                        }`}
-                      >
-                        <i className={`${fileName.endsWith('.json') ? 'ri-file-list-line' : 'ri-file-code-line'} text-gray-400`}></i>
-                        <span className="text-xs md:text-sm truncate">{fileName}</span>
-                      </button>
+                    <li 
+                      key={fileName}
+                      className={`px-3 py-2 rounded-lg text-sm cursor-pointer ${
+                        selectedFile === fileName ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700/50'
+                      }`}
+                      onClick={() => setSelectedFile(fileName)}
+                    >
+                      <i className={`ri-file-code-line mr-2 ${
+                        fileName.endsWith('.js') ? 'text-yellow-400' : 
+                        fileName.endsWith('.json') ? 'text-blue-400' :
+                        fileName.endsWith('.html') ? 'text-orange-400' :
+                        fileName.endsWith('.css') ? 'text-purple-400' : 'text-gray-400'
+                      }`}></i>
+                      {fileName}
                     </li>
                   ))}
                 </ul>
               </div>
             </div>
-
-            {/* File content editor */}
-            <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden">
-              <div className="bg-gray-900 text-gray-300 px-3 py-2 md:px-4 md:py-3 text-xs md:text-sm font-mono border-b border-gray-700 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <i className={`${selectedFile.endsWith('.json') ? 'ri-file-list-line' : 'ri-file-code-line'} text-gray-400`}></i>
-                  <span>{selectedFile}</span>
+            
+            {/* Code editor area */}
+            <div className="flex-1 flex flex-col h-full overflow-hidden">
+              {/* Editor toolbar */}
+              <div className="bg-gray-100 p-2 border-b flex items-center justify-between">
+                <div className="flex items-center">
+                  <span className="text-sm font-medium px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg mr-2">
+                    {selectedFile}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="text-xs text-gray-500 hidden sm:block">
-                    {fileContent.split('\n').length} lines | {getLanguageForFile(selectedFile)}
-                  </div>
-                  <button
+                  <button 
                     onClick={handleRunCode}
                     disabled={isRunning}
-                    className={`px-3 py-1 md:px-4 md:py-2 rounded-lg text-xs font-medium flex items-center gap-1 ${
-                      isRunning 
-                        ? 'bg-gray-700 text-gray-400 cursor-not-allowed' 
-                        : 'bg-green-600 text-white hover:bg-green-700'
-                    }`}
-                  >
+                    className={`px-3 py-1 text-sm rounded-lg flex items-center gap-1 ${
+                      isRunning ? 'bg-gray-400 cursor-wait' : 'bg-green-600 hover:bg-green-700 text-white'
+                    }`}>
                     {isRunning ? (
                       <>
-                        <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <path className="opacity-75" fill="currentColor" d="M4000 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                         Running...
                       </>
                     ) : (
                       <>
-                        <i className="ri-play-circle-line"></i>
-                        Run
+                        <i className="ri-play-line"></i> Run
                       </>
                     )}
+                  </button>
+                  <button 
+                    onClick={() => killActiveProcess()}
+                    disabled={!isRunning}
+                    className={`px-3 py-1 text-sm rounded-lg flex items-center gap-1 ${
+                      !isRunning ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700 text-white'
+                    }`}>
+                    <i className="ri-stop-line"></i> Stop
                   </button>
                 </div>
               </div>
               
-              {/* Code editor content */}
-              <div className="flex flex-col flex-1 overflow-hidden">
-                {renderSyntaxHighlightedEditor()}
-                
-                {/* Output console */}
-                {runOutput && (
-                  <div className="bg-black text-green-400 border-t border-gray-700 p-3 h-1/3 overflow-auto font-mono text-xs">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-white text-xs font-semibold">Console Output</span>
-                      <button 
-                        onClick={() => setRunOutput("")}
-                        className="text-gray-500 hover:text-white text-xs"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <pre>{runOutput}</pre>
+              {/* Code editor */}
+              <div className="flex-1 overflow-hidden">
+                <div className="h-full">
+                  <CodeMirror
+                    ref={editorRef}
+                    value={fileContent}
+                    height="100%"
+                    theme={dracula}
+                    onChange={handleCodeChange}
+                    extensions={[getLanguageExtension(selectedFile)]}
+                    basicSetup={{
+                      lineNumbers: true,
+                      highlightActiveLineGutter: true,
+                      highlightSpecialChars: true,
+                      foldGutter: true,
+                      dropCursor: true,
+                      allowMultipleSelections: true,
+                      indentOnInput: true,
+                      syntaxHighlighting: true,
+                      bracketMatching: true,
+                      closeBrackets: true,
+                      autocompletion: true,
+                      rectangularSelection: true,
+                      crosshairCursor: true,
+                      highlightActiveLine: true,
+                      highlightSelectionMatches: true,
+                      closeBracketsKeymap: true,
+                      defaultKeymap: true,
+                      searchKeymap: true,
+                      historyKeymap: true,
+                      foldKeymap: true,
+                      completionKeymap: true,
+                      lintKeymap: true
+                    }}
+                  />
+                </div>
+              </div>
+              
+              {/* Output and Preview Area */}
+              <div className="h-1/3 flex flex-col overflow-hidden bg-gray-900 text-white border-t border-gray-700">
+                <div className="flex items-center justify-between p-2 bg-gray-800 border-b border-gray-700">
+                  <div className="flex items-center space-x-2">
+                    <button 
+                      className={`px-3 py-1 text-xs rounded-lg ${!iframeUrl ? 'bg-gray-700 text-gray-300' : 'bg-blue-600 text-white'}`}
+                      disabled={!iframeUrl}
+                    >
+                      <i className="ri-terminal-line mr-1"></i> Output
+                    </button>
+                    {iframeUrl && (
+                      <form onSubmit={handleRouteChange} className="flex items-center">
+                        <input
+                          type="text"
+                          value={routing}
+                          onChange={(e) => setRouting(e.target.value)}
+                          placeholder="URL path"
+                          className="ml-2 px-2 py-1 text-xs bg-gray-700 text-white rounded-l-lg border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                        <button 
+                          type="submit"
+                          className="px-2 py-1 text-xs bg-blue-600 text-white rounded-r-lg border border-blue-700 hover:bg-blue-700"
+                        >
+                          Go
+                        </button>
+                      </form>
+                    )}
                   </div>
-                )}
+                </div>
+                
+                <div className="flex-1 flex overflow-hidden">
+                  {/* Console Output */}
+                  <div className="flex-1 p-2 font-mono text-xs overflow-auto whitespace-pre-wrap">
+                    {runOutput}
+                  </div>
+                  
+                  {/* Preview iframe */}
+                  {iframeUrl && (
+                    <div className="flex-1 border-l border-gray-700 bg-white">
+                      <iframe 
+                        src={iframeUrl} 
+                        className="w-full h-full"
+                        title="Project Preview"
+                        sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
         )}
       </div>
 
+      {/* Modal for adding collaborators */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-4 md:p-6 border border-gray-200 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl md:text-2xl font-semibold text-indigo-700">Add Collaborators</h2>
-              <button onClick={() => setShowAddModal(false)} className="text-gray-500 hover:text-red-500">
-                <i className="ri-close-line text-2xl" />
+              <h3 className="text-lg font-bold text-gray-800">Add Collaborators</h3>
+              <button 
+                onClick={() => setShowAddModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <i className="ri-close-line text-xl"></i>
               </button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); handleAddCollaborator(); }} className="space-y-4 md:space-y-6">
-              <div>
-                <label className="block text-xs md:text-sm font-medium text-gray-600 mb-2">Select Users</label>
-                <div className="max-h-60 md:max-h-64 overflow-y-auto border border-gray-300 rounded-xl p-2 md:p-3 bg-gray-50 space-y-2 md:space-y-3">
-                  {allUsers.length === 0 ? (
-                    <p className="text-gray-400 text-xs md:text-sm text-center">No users available.</p>
-                  ) : (
-                    allUsers.map((user) => (
-                      <label key={user._id} className="flex items-center justify-between px-3 py-2 md:px-4 md:py-2 bg-white hover:bg-gray-100 border border-gray-200 rounded-xl shadow-sm">
-                        <div className="flex items-center gap-2 md:gap-3">
-                          <i className="ri-user-line text-indigo-500 text-base md:text-lg" />
-                          <div>
-                            <p className="text-xs md:text-sm font-medium text-gray-800">{user.name}</p>
-                            <p className="text-xs text-gray-500">{user.email}</p>
-                          </div>
-                        </div>
+            
+            <div className="max-h-64 overflow-y-auto mb-4">
+              {allUsers.length === 0 ? (
+                <p className="text-gray-500 text-center py-4">No available users to add</p>
+              ) : (
+                <ul className="space-y-2">
+                  {allUsers.map((user) => (
+                    <li key={user._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
+                      <input
+                        type="checkbox"
+                        id={`add-user-${user._id}`}
+                        checked={selectedUserIds.includes(user._id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedUserIds([...selectedUserIds, user._id]);
+                          } else {
+                            setSelectedUserIds(selectedUserIds.filter(id => id !== user._id));
+                          }
+                        }}
+                        className="mr-3 rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <label htmlFor={`add-user-${user._id}`} className="flex-1 cursor-pointer">
+                        <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                        <p className="text-xs text-gray-500">{user.email}</p>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddCollaborator}
+                disabled={selectedUserIds.length === 0}
+                className={`px-4 py-2 text-sm text-white rounded-lg ${
+                  selectedUserIds.length === 0
+                    ? 'bg-indigo-400 cursor-not-allowed'
+                    : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
+              >
+                Add Selected
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for removing collaborators */}
+      {showRemoveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-gray-800">Remove Collaborators</h3>
+              <button 
+                onClick={() => setShowRemoveModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <i className="ri-close-line text-xl"></i>
+              </button>
+            </div>
+            
+            <div className="max-h-64 overflow-y-auto mb-4">
+              {project.users.length <= 1 ? (
+                <p className="text-gray-500 text-center py-4">No collaborators to remove</p>
+              ) : (
+                <ul className="space-y-2">
+                  {project.users.map((user) => (
+                    user._id !== project.owner && (
+                      <li key={user._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
                         <input
                           type="checkbox"
-                          value={user._id}
-                          checked={selectedUserIds.includes(user._id)}
+                          id={`remove-user-${user._id}`}
+                          checked={selectedRemoveUserIds.includes(user._id)}
                           onChange={(e) => {
-                            const checked = e.target.checked;
-                            setSelectedUserIds((prev) =>
-                              checked ? [...prev, user._id] : prev.filter((id) => id !== user._id)
-                            );
+                            if (e.target.checked) {
+                              setSelectedRemoveUserIds([...selectedRemoveUserIds, user._id]);
+                            } else {
+                              setSelectedRemoveUserIds(selectedRemoveUserIds.filter(id => id !== user._id));
+                            }
                           }}
-                          className="w-4 h-4 accent-indigo-600"
+                          className="mr-3 rounded text-red-600 focus:ring-red-500"
                         />
-                      </label>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 md:gap-4 pt-3 md:pt-4 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-3 py-1 md:px-4 md:py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 text-xs md:text-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1 md:px-6 md:py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 text-xs md:text-sm"
-                  disabled={!selectedUserIds.length}
-                >
-                  Add Selected
-                </button>
-              </div>
-            </form>
+                        <label htmlFor={`remove-user-${user._id}`} className="flex-1 cursor-pointer">
+                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                          <p className="text-xs text-gray-500">{user.email}</p>
+                        </label>
+                      </li>
+                    )
+                  ))}
+                </ul>
+              )}
+            </div>
+            
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowRemoveModal(false)}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRemoveCollaborator}
+                disabled={selectedRemoveUserIds.length === 0}
+                className={`px-4 py-2 text-sm text-white rounded-lg ${
+                  selectedRemoveUserIds.length === 0
+                    ? 'bg-red-400 cursor-not-allowed'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                Remove Selected
+              </button>
+            </div>
           </div>
         </div>
       )}
