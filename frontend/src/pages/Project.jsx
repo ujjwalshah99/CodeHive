@@ -87,9 +87,15 @@ function ProjectPage() {
   const [iframeUrl, setIframeUrl] = useState(null);
   const [routing, setRouting] = useState('/');
   const editorRef = useRef(null);
+  const [isSaved, setIsSaved] = useState(false);
   
   // Store reference to current running processes
   const activeProcessRef = useRef(null);
+
+  const resetPreview = () => {
+    setRouting('/');
+    setIframeUrl(null);
+  };
   
   // Debounce function for autosave
   const useDebounce = (value, delay) => {
@@ -116,17 +122,30 @@ function ProjectPage() {
     if (activeProcessRef.current) {
       try {
         setRunOutput(prev => prev + "\nStopping previous process...\n");
+        // Ensure we properly kill the process and wait for it to complete
         await activeProcessRef.current.kill();
+        // Important: Clear the reference after killing
         activeProcessRef.current = null;
+        setIsRunning(false); // Make sure to set running state to false
         setRunOutput(prev => prev + "Previous process terminated successfully.\n");
         return true;
       } catch (error) {
         console.error("Error killing process:", error);
-        setRunOutput(prev => prev + `Error stopping previous process: ${error.message}\n`);
+        setRunOutput(prev => prev + `Error stopping process: ${error.message}\n`);
+        // Reset state even on error to allow rerunning
+        activeProcessRef.current = null;
+        setIsRunning(false);
         return false;
       }
     }
     return true;
+  };
+
+  const handleStopCode = async () => {
+    await killActiveProcess();
+    // Clear the iframe URL to remove the preview
+    setIframeUrl(null);
+    setRunOutput(prev => prev + "Process stopped and preview cleared.\n");
   };
 
   // Process and validate fileTree
@@ -295,15 +314,42 @@ function ProjectPage() {
   }, [messages]);
 
   // Set initial file content when component mounts or selected file changes
+  // Set initial file content when component mounts or selected file changes
   useEffect(() => {
-    if (selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file) {
-      const content = fileTree[selectedFile].file.contents;
-      setFileContent(content);
-    } else {
-      // If file doesn't exist or doesn't have content, set empty content
-      setFileContent("");
+    if (selectedFile && fileTree) {
+      console.log(`Loading file: ${selectedFile}`, fileTree);
+      
+      if (fileTree[selectedFile]) {
+        // Check if it's a file (not a directory)
+        if (fileTree[selectedFile].file) {
+          console.log(`Loading content for ${selectedFile}:`, fileTree[selectedFile].file.contents);
+          console.log(fileTree);
+          setFileContent(fileTree[selectedFile].file.contents || "");
+        } else {
+          // It's a directory, not a file
+          console.log(`${selectedFile} is a directory, not a file`);
+          setFileContent("");
+        }
+      } else {
+        console.warn(`File ${selectedFile} doesn't exist in the file tree`, fileTree);
+        setFileContent("");
+      }
     }
   }, [selectedFile, fileTree]);
+  
+  // Add a proper file selection handler function
+  const handleFileSelect = (fileName) => {
+    // Save current file before switching
+    if (selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file) {
+      const updatedFileTree = { ...fileTree };
+      updatedFileTree[selectedFile].file.contents = fileContent;
+      setFileTree(updatedFileTree);
+    }
+    
+    // Set the new selected file
+    setSelectedFile(fileName);
+    setFileContent(fileTree[fileName] || '');
+  };
 
   // Check viewport size and adjust sidebar visibility
   useEffect(() => {
@@ -395,19 +441,21 @@ function ProjectPage() {
   };
 
   const handleRunCode = async () => {
+
+    resetPreview();
     if (!webContainer) {
       setRunOutput("Web container not initialized yet. Please try again later.");
       return;
     }
-
+  
     // Kill any existing process before starting a new one
     const killSuccess = await killActiveProcess();
     if (!killSuccess) return;
-
+  
     setIsRunning(true);
     setRunOutput("Running code...\n");
     setIframeUrl(null); // Reset iframe URL
-
+  
     try {
       // Make sure fileTree is up to date with latest editor changes
       const updatedFileTree = { ...fileTree };
@@ -415,9 +463,8 @@ function ProjectPage() {
         updatedFileTree[selectedFile].file.contents = fileContent;
       }
       
-      // Check if package.json is valid
+      // Ensure package.json exists and is valid
       if (!updatedFileTree["package.json"] || !updatedFileTree["package.json"].file) {
-        // Create a default package.json
         updatedFileTree["package.json"] = {
           file: {
             contents: JSON.stringify({
@@ -435,7 +482,6 @@ function ProjectPage() {
             }, null, 2)
           }
         };
-        setFileTree(updatedFileTree); // Update the file tree with the package.json
       } else {
         try {
           // Validate package.json is proper JSON
@@ -456,31 +502,29 @@ function ProjectPage() {
               "express": "^4.18.2"
             }
           }, null, 2);
-          setFileTree(updatedFileTree);
         }
       }
       
-      // Make sure app.js exists
+      // Ensure app.js exists
       if (!updatedFileTree["app.js"] || !updatedFileTree["app.js"].file) {
         updatedFileTree["app.js"] = {
           file: {
             contents: `const express = require('express');
-const app = express();
-const port = 3111;
-
-app.use(express.static('public'));
-app.use(express.json());
-
-app.get('/', (req, res) => {
-  res.send('<h1>Welcome to the Web Project</h1>');
-});
-
-app.listen(port, () => {
-  console.log(\`Server running at http://localhost:\${port}\`);
-});`
+  const app = express();
+  const port = 3111;
+  
+  app.use(express.static('public'));
+  app.use(express.json());
+  
+  app.get('/', (req, res) => {
+    res.send('<h1>Welcome to the Web Project</h1>');
+  });
+  
+  app.listen(port, () => {
+    console.log(\`Server running at http://localhost:\${port}\`);
+  });`
           }
         };
-        setFileTree(updatedFileTree);
       }
       
       // Log out fileTree for debugging
@@ -489,32 +533,40 @@ app.listen(port, () => {
       
       // Mount the files to the web container
       await webContainer.mount(updatedFileTree);
+      setFileTree(updatedFileTree); // Update the file tree state
       
       // Install dependencies
       setRunOutput(prev => prev + "Installing dependencies...\n");
       const installProcess = await webContainer.spawn("npm", ["install"]);
       activeProcessRef.current = installProcess;
       
-      const installOutput = [];
-      await installProcess.output.pipeTo(new WritableStream({
+      installProcess.output.pipeTo(new WritableStream({
         write(chunk) {
-          installOutput.push(chunk);
           setRunOutput(prev => prev + chunk);
         }
       }));
+      
+      // Wait for the install process to complete before continuing
+      const installExitCode = await installProcess.exit;
+      
+      if (installExitCode !== 0) {
+        setRunOutput(prev => prev + `\nInstallation failed with exit code ${installExitCode}\n`);
+        setIsRunning(false);
+        return;
+      }
       
       // Start the application
       setRunOutput(prev => prev + "\nStarting application...\n");
-      const runProcess = await webContainer.spawn("npm", ["start"]);
-      activeProcessRef.current = runProcess;
+      const startProcess = await webContainer.spawn("node", ["app.js"]);
+      activeProcessRef.current = startProcess;
       
-      await runProcess.output.pipeTo(new WritableStream({
+      startProcess.output.pipeTo(new WritableStream({
         write(chunk) {
           setRunOutput(prev => prev + chunk);
         }
       }));
       
-      // Listen for server ready event
+      // Listen for server ready event (this is handled by WebContainer)
       webContainer.on("server-ready", (port, url) => {
         setIframeUrl(url);
         setRunOutput(prev => prev + `\nServer running at: ${url}\n`);
@@ -524,8 +576,43 @@ app.listen(port, () => {
     } catch (error) {
       setRunOutput(prev => prev + `\nError: ${error.message}\n`);
       console.error("Runtime error:", error);
-    } finally {
       setIsRunning(false);
+      activeProcessRef.current = null; // Clear reference on error
+    }
+  };
+
+  // Add this function to save the file tree to the database
+  const saveFileTree = async () => {
+    if (!project || !fileTree) {
+      console.error("Cannot save: Project or fileTree is missing");
+      return;
+    }
+    
+    try {
+      // First, ensure the current file content is saved to the fileTree
+      const updatedFileTree = { ...fileTree };
+      if (selectedFile && updatedFileTree[selectedFile] && updatedFileTree[selectedFile].file) {
+        updatedFileTree[selectedFile].file.contents = fileContent;
+      }
+      
+      // Send the fileTree to the server
+      const response = await axios.put('/projects/update-file-tree', {
+        projectId: project._id,
+        fileTree: updatedFileTree
+      });
+      
+      if (response.data.success) {
+        console.log("File tree saved successfully");
+        
+        // You could show a success notification here
+        // For example, add a temporary state to show a "Saved!" message
+        setIsSaved(true);
+        setTimeout(() => setIsSaved(false), 2000);
+      } else {
+        console.error("Failed to save file tree:", response.data.message);
+      }
+    } catch (error) {
+      console.error("Error saving file tree:", error);
     }
   };
   
@@ -544,12 +631,28 @@ app.listen(port, () => {
   // Handle route change for iframe preview
   const handleRouteChange = (e) => {
     e.preventDefault();
-    if (!iframeUrl) return;
+    if (!iframeUrl) {
+      setRunOutput(prev => prev + "\nNo preview available. Run the application first.\n");
+      return;
+    }
     
-    // Extract base URL and add the new route
-    const baseUrl = iframeUrl.split('?')[0].replace(/\/$/, '');
-    const newUrl = `${baseUrl}${routing.startsWith('/') ? routing : `/${routing}`}`;
-    setIframeUrl(newUrl);
+    try {
+      // Parse the current URL to get the origin
+      const url = new URL(iframeUrl);
+      const origin = url.origin;
+      
+      // Create a new URL with the provided route path
+      // Ensure the path starts with a slash
+      const path = routing.startsWith('/') ? routing : `/${routing}`;
+      const newUrl = `${origin}${path}`;
+      
+      console.log(`Changing route from ${iframeUrl} to ${newUrl}`);
+      setRunOutput(prev => prev + `\nNavigating to ${newUrl}\n`);
+      setIframeUrl(newUrl);
+    } catch (error) {
+      console.error("Error changing route:", error);
+      setRunOutput(prev => prev + `\nError changing route: ${error.message}\n`);
+    }
   };
 
   if (!project) return (
@@ -588,7 +691,7 @@ app.listen(port, () => {
           <i className="ri-code-line mr-1"></i> Code
         </button>
       </div>
-
+  
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar - Chat & Collaborator Section */}
         {showChatSidebar && (
@@ -608,7 +711,7 @@ app.listen(port, () => {
                   <i className="ri-user-unfollow-line mr-1"></i> Remove
                 </button>
               </div>
-
+  
               {showDetails ? (
                 <button
                   onClick={() => setShowDetails(false)}
@@ -633,7 +736,7 @@ app.listen(port, () => {
                 <i className="ri-close-line text-xl"></i>
               </button>
             </div>
-
+  
             {showDetails ? (
               <div className="flex-1 overflow-y-auto p-4 md:p-5 bg-gray-50">
                 <h3 className="text-lg md:text-xl font-bold text-indigo-700 mb-4 flex items-center gap-2">
@@ -711,13 +814,13 @@ app.listen(port, () => {
             )}
           </div>
         )}
-
+  
         {/* Right section of the page - Code Editor Area */}
         {showFileSidebar && (
           <div className="flex-1 flex flex-col h-full md:flex-row overflow-hidden">
             {/* File list sidebar */}
             <div className="w-full md:w-56 lg:w-64 bg-gray-800 text-white border-r border-gray-700 flex flex-col overflow-hidden">
-            <div className="p-3 md:p-4 border-b border-gray-700 flex justify-between items-center">
+              <div className="p-3 md:p-4 border-b border-gray-700 flex justify-between items-center">
                 <h3 className="font-semibold text-sm">Files</h3>
                 <button 
                   className="md:hidden text-gray-400 hover:text-white transition-colors"
@@ -733,7 +836,7 @@ app.listen(port, () => {
                       className={`px-3 py-2 rounded-lg text-sm cursor-pointer ${
                         selectedFile === fileName ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700/50'
                       }`}
-                      onClick={() => setSelectedFile(fileName)}
+                      onClick={() => handleFileSelect(fileName)}
                     >
                       <i className={`ri-file-code-line mr-2 ${
                         fileName.endsWith('.js') ? 'text-yellow-400' : 
@@ -750,14 +853,25 @@ app.listen(port, () => {
             
             {/* Code editor area */}
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-              {/* Editor toolbar */}
+              {/* Editor toolbar - modified to include Save button */}
               <div className="bg-gray-100 p-2 border-b flex items-center justify-between">
                 <div className="flex items-center">
                   <span className="text-sm font-medium px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg mr-2">
                     {selectedFile}
                   </span>
+                  {isSaved && (
+                    <span className="text-xs text-green-600 font-medium animate-fade-out">
+                      <i className="ri-check-line mr-1"></i>Saved!
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button 
+                    onClick={saveFileTree}
+                    className="px-3 py-1 text-sm rounded-lg flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <i className="ri-save-line"></i> Save
+                  </button>
                   <button 
                     onClick={handleRunCode}
                     disabled={isRunning}
@@ -768,7 +882,7 @@ app.listen(port, () => {
                       <>
                         <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4000 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                         Running...
                       </>
@@ -779,7 +893,7 @@ app.listen(port, () => {
                     )}
                   </button>
                   <button 
-                    onClick={() => killActiveProcess()}
+                    onClick={handleStopCode}
                     disabled={!isRunning}
                     className={`px-3 py-1 text-sm rounded-lg flex items-center gap-1 ${
                       !isRunning ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700 text-white'
@@ -791,7 +905,7 @@ app.listen(port, () => {
               
               {/* Code editor */}
               <div className="flex-1 overflow-hidden">
-                <div className="h-full">
+                <div className="h-full overflow-auto">
                   <CodeMirror
                     ref={editorRef}
                     value={fileContent}
@@ -838,21 +952,73 @@ app.listen(port, () => {
                       <i className="ri-terminal-line mr-1"></i> Output
                     </button>
                     {iframeUrl && (
-                      <form onSubmit={handleRouteChange} className="flex items-center">
-                        <input
-                          type="text"
-                          value={routing}
-                          onChange={(e) => setRouting(e.target.value)}
-                          placeholder="URL path"
-                          className="ml-2 px-2 py-1 text-xs bg-gray-700 text-white rounded-l-lg border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <button 
-                          type="submit"
-                          className="px-2 py-1 text-xs bg-blue-600 text-white rounded-r-lg border border-blue-700 hover:bg-blue-700"
+                      <div className="flex items-center">
+                        <form onSubmit={handleRouteChange} className="flex items-center">
+                          <input
+                            type="text"
+                            value={routing}
+                            onChange={(e) => setRouting(e.target.value)}
+                            placeholder="URL path"
+                            className="ml-2 px-2 py-1 text-xs bg-gray-700 text-white rounded-l-lg border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                          <button 
+                            type="submit"
+                            className="px-2 py-1 text-xs bg-blue-600 text-white rounded-r-lg border border-blue-700 hover:bg-blue-700"
+                          >
+                            Go
+                          </button>
+                        </form>
+                        <button
+                          onClick={() => {
+                            if (iframeUrl) {
+                              // Navigate to home route
+                              setRouting('/');
+                              try {
+                                const url = new URL(iframeUrl);
+                                setIframeUrl(`${url.origin}/`);
+                              } catch (error) {
+                                console.error("Error navigating to home:", error);
+                              }
+                            }
+                          }}
+                          className="ml-2 px-2 py-1 text-xs bg-gray-700 text-white rounded-lg border border-gray-600 hover:bg-gray-600"
                         >
-                          Go
+                          <i className="ri-home-line mr-1"></i>
                         </button>
-                      </form>
+                        <button
+                          onClick={() => {
+                            if (iframeUrl) {
+                              // Refresh current route
+                              try {
+                                const url = new URL(iframeUrl);
+                                setIframeUrl(`${url.origin}${url.pathname}`);
+                              } catch (error) {
+                                console.error("Error refreshing:", error);
+                              }
+                            }
+                          }}
+                          className="ml-2 px-2 py-1 text-xs bg-gray-700 text-white rounded-lg border border-gray-600 hover:bg-gray-600"
+                        >
+                          <i className="ri-refresh-line mr-1"></i>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {isRunning ? (
+                      <button 
+                        onClick={handleStopCode}
+                        className="px-3 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700"
+                      >
+                        <i className="ri-stop-line mr-1"></i> Stop
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleRunCode}
+                        className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >
+                        <i className="ri-play-line mr-1"></i> Run
+                      </button>
                     )}
                   </div>
                 </div>
@@ -870,7 +1036,7 @@ app.listen(port, () => {
                         src={iframeUrl} 
                         className="w-full h-full"
                         title="Project Preview"
-                        sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
+                        sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-same-origin allow-scripts allow-top-navigation"
                       />
                     </div>
                   )}
@@ -879,143 +1045,143 @@ app.listen(port, () => {
             </div>
           </div>
         )}
-      </div>
-
-      {/* Modal for adding collaborators */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-800">Add Collaborators</h3>
-              <button 
-                onClick={() => setShowAddModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <i className="ri-close-line text-xl"></i>
-              </button>
-            </div>
-            
-            <div className="max-h-64 overflow-y-auto mb-4">
-              {allUsers.length === 0 ? (
-                <p className="text-gray-500 text-center py-4">No available users to add</p>
-              ) : (
-                <ul className="space-y-2">
-                  {allUsers.map((user) => (
-                    <li key={user._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
-                      <input
-                        type="checkbox"
-                        id={`add-user-${user._id}`}
-                        checked={selectedUserIds.includes(user._id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedUserIds([...selectedUserIds, user._id]);
-                          } else {
-                            setSelectedUserIds(selectedUserIds.filter(id => id !== user._id));
-                          }
-                        }}
-                        className="mr-3 rounded text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <label htmlFor={`add-user-${user._id}`} className="flex-1 cursor-pointer">
-                        <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                        <p className="text-xs text-gray-500">{user.email}</p>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddCollaborator}
-                disabled={selectedUserIds.length === 0}
-                className={`px-4 py-2 text-sm text-white rounded-lg ${
-                  selectedUserIds.length === 0
-                    ? 'bg-indigo-400 cursor-not-allowed'
-                    : 'bg-indigo-600 hover:bg-indigo-700'
-                }`}
-              >
-                Add Selected
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal for removing collaborators */}
-      {showRemoveModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-800">Remove Collaborators</h3>
-              <button 
-                onClick={() => setShowRemoveModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <i className="ri-close-line text-xl"></i>
-              </button>
-            </div>
-            
-            <div className="max-h-64 overflow-y-auto mb-4">
-              {project.users.length <= 1 ? (
-                <p className="text-gray-500 text-center py-4">No collaborators to remove</p>
-              ) : (
-                <ul className="space-y-2">
-                  {project.users.map((user) => (
-                    user._id !== project.owner && (
+  
+        {/* Modal for adding collaborators */}
+        {showAddModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-gray-800">Add Collaborators</h3>
+                <button 
+                  onClick={() => setShowAddModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <i className="ri-close-line text-xl"></i>
+                </button>
+              </div>
+              
+              <div className="max-h-64 overflow-y-auto mb-4">
+                {allUsers.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">No available users to add</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {allUsers.map((user) => (
                       <li key={user._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
                         <input
                           type="checkbox"
-                          id={`remove-user-${user._id}`}
-                          checked={selectedRemoveUserIds.includes(user._id)}
+                          id={`add-user-${user._id}`}
+                          checked={selectedUserIds.includes(user._id)}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedRemoveUserIds([...selectedRemoveUserIds, user._id]);
+                              setSelectedUserIds([...selectedUserIds, user._id]);
                             } else {
-                              setSelectedRemoveUserIds(selectedRemoveUserIds.filter(id => id !== user._id));
+                              setSelectedUserIds(selectedUserIds.filter(id => id !== user._id));
                             }
                           }}
-                          className="mr-3 rounded text-red-600 focus:ring-red-500"
+                          className="mr-3 rounded text-indigo-600 focus:ring-indigo-500"
                         />
-                        <label htmlFor={`remove-user-${user._id}`} className="flex-1 cursor-pointer">
+                        <label htmlFor={`add-user-${user._id}`} className="flex-1 cursor-pointer">
                           <p className="text-sm font-medium text-gray-700">{user.name}</p>
                           <p className="text-xs text-gray-500">{user.email}</p>
                         </label>
                       </li>
-                    )
-                  ))}
-                </ul>
-              )}
-            </div>
-            
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setShowRemoveModal(false)}
-                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRemoveCollaborator}
-                disabled={selectedRemoveUserIds.length === 0}
-                className={`px-4 py-2 text-sm text-white rounded-lg ${
-                  selectedRemoveUserIds.length === 0
-                    ? 'bg-red-400 cursor-not-allowed'
-                    : 'bg-red-600 hover:bg-red-700'
-                }`}
-              >
-                Remove Selected
-              </button>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddCollaborator}
+                  disabled={selectedUserIds.length === 0}
+                  className={`px-4 py-2 text-sm text-white rounded-lg ${
+                    selectedUserIds.length === 0
+                      ? 'bg-indigo-400 cursor-not-allowed'
+                      : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
+                >
+                  Add Selected
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+  
+        {/* Modal for removing collaborators */}
+        {showRemoveModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-gray-800">Remove Collaborators</h3>
+                <button 
+                  onClick={() => setShowRemoveModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <i className="ri-close-line text-xl"></i>
+                </button>
+              </div>
+              
+              <div className="max-h-64 overflow-y-auto mb-4">
+                {project.users.length <= 1 ? (
+                  <p className="text-gray-500 text-center py-4">No collaborators to remove</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {project.users.map((user) => (
+                      user._id !== project.owner && (
+                        <li key={user._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
+                          <input
+                            type="checkbox"
+                            id={`remove-user-${user._id}`}
+                            checked={selectedRemoveUserIds.includes(user._id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedRemoveUserIds([...selectedRemoveUserIds, user._id]);
+                              } else {
+                                setSelectedRemoveUserIds(selectedRemoveUserIds.filter(id => id !== user._id));
+                              }
+                            }}
+                            className="mr-3 rounded text-red-600 focus:ring-red-500"
+                          />
+                          <label htmlFor={`remove-user-${user._id}`} className="flex-1 cursor-pointer">
+                            <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                            <p className="text-xs text-gray-500">{user.email}</p>
+                          </label>
+                        </li>
+                      )
+                    ))}
+                  </ul>
+                )}
+              </div>
+              
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowRemoveModal(false)}
+                  className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRemoveCollaborator}
+                  disabled={selectedRemoveUserIds.length === 0}
+                  className={`px-4 py-2 text-sm text-white rounded-lg ${
+                    selectedRemoveUserIds.length === 0
+                      ? 'bg-red-400 cursor-not-allowed'
+                      : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                >
+                  Remove Selected
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
