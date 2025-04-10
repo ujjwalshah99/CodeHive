@@ -131,10 +131,90 @@ const updateFileTree = async({projectId , fileTree}) => {
     return project;
 }
 
+const removeUserFromProject = async({projectId , users , userId}) => {
+    if(!projectId) {
+        throw new Error("projectId is required");
+    }
+
+    if(!mongoose.Types.ObjectId.isValid(projectId)) {
+        throw new Error("projectId is invalid");
+    }
+
+    if(!users) {
+        throw new Error("users array is required");
+    }
+
+    if(!Array.isArray(users) || users.some(userId => !mongoose.Types.ObjectId.isValid(userId))) {
+        throw new Error("Invalid userId(s) in users array")
+    }
+
+    if (!userId) {
+        throw new Error("userId is required")
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+        throw new Error("Invalid userId")
+    }
+
+    const project = await projectModel.findOne({
+        _id: projectId,
+        users: userId
+    })
+
+    if (!project) {
+        throw new Error("User not belong to this project")
+    }
+
+    const updatedProject = await projectModel.findByIdAndUpdate({
+        _id : projectId
+    } , {
+        $pull : {
+            users : {
+                $in : users
+            }
+        }
+    } , {
+        new : true
+    })
+
+    return updatedProject;
+
+}   
+
+const deleteProject = async ({projectId , userId}) => {
+
+    if(!projectId) {
+        throw new Error("projectId is required");
+    }
+    if(!mongoose.Types.ObjectId.isValid(projectId)) {
+        throw new Error("projectId is invalid");
+    }
+    if(!userId) {
+        throw new Error("user is required");
+    }
+
+    try {
+        const deletedProject = await projectModel.findByIdAndDelete(projectId);
+
+        if (!deletedProject) {
+            throw new Error('Project not found or already deleted');
+        }
+
+        return deletedProject;
+    } catch (error) {
+        console.error('Error deleting project:', error);
+        throw new Error('An error occurred while deleting the project');
+    }
+}    
+
+
 module.exports = {
     createProject,
     getAllProjectByUserId,
     addUsersToProject,
     getProjectById,
-    updateFileTree
+    updateFileTree,
+    updateFileTree,
+    removeUserFromProject,
+    deleteProject
 };

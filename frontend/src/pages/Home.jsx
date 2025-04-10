@@ -6,9 +6,12 @@ import { useNavigate } from 'react-router-dom';
 function Home() {
   const { user } = useUser();
   const [showModal, setShowModal] = useState(false);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState('');
   const [projectName, setProjectName] = useState('');
   const [projects, setProjects] = useState([]);
   const navigate = useNavigate();
+  const [shouldProceed, setShouldProceed] = useState(false);
 
   const fetchProjects = () => {
     axios
@@ -32,6 +35,35 @@ function Home() {
         fetchProjects();
       })
       .catch((err) => console.error('Error creating project:', err));
+  };
+
+  useEffect(() => {
+    if (projectToDelete && shouldProceed) {
+      // This code runs *after* projectToDelete is set
+      console.log('Now ready to proceed with:', projectToDelete);
+      setShowDeleteConfirmation(true);
+      setShouldProceed(false); // reset flag if needed
+    }
+  }, [projectToDelete, shouldProceed]);
+
+  const handleDeleteClick = async (e, project) => {
+    e.stopPropagation(); // Prevent navigation to project page
+    setProjectToDelete(project?._id);
+    setShouldProceed(true);
+    setShowDeleteConfirmation(true);
+  };
+
+  const deleteProject = () => {
+    if (!projectToDelete) return;
+    console.log("del" , typeof projectToDelete);
+    axios
+      .delete('/projects/delete', { data: { projectId: projectToDelete } })
+      .then(() => {
+        setShowDeleteConfirmation(false);
+        setProjectToDelete(null);
+        fetchProjects();
+      })
+      .catch((err) => console.error('Error deleting project:', err));
   };
 
   useEffect(() => {
@@ -73,17 +105,28 @@ function Home() {
           projects.map((project) => (
             <div
               key={project._id}
-              onClick={() => navigate('/project', { state: { project } })}
-              className="bg-white border border-slate-200 rounded-2xl p-6 shadow-md hover:shadow-xl hover:scale-[1.01] transition cursor-pointer"
+              className="bg-white border border-slate-200 rounded-2xl p-6 shadow-md hover:shadow-xl hover:scale-[1.01] transition cursor-pointer relative"
             >
-              <h3 className="text-xl font-semibold text-slate-800 mb-3">{project.name}</h3>
-              <div className="flex items-center text-slate-600 text-sm">
-                <i className="ri-user-3-line mr-2 text-indigo-600 text-base"></i>
-                Collaborators:{' '}
-                <span className="ml-1 font-semibold text-slate-800">
-                  {project?.users?.length || 0}
-                </span>
+              <div 
+                onClick={() => navigate('/project', { state: { project } })}
+                className="mb-8"
+              >
+                <h3 className="text-xl font-semibold text-slate-800 mb-3">{project.name}</h3>
+                <div className="flex items-center text-slate-600 text-sm">
+                  <i className="ri-user-3-line mr-2 text-indigo-600 text-base"></i>
+                  Collaborators:{' '}
+                  <span className="ml-1 font-semibold text-slate-800">
+                    {project?.users?.length || 0}
+                  </span>
+                </div>
               </div>
+              <button
+                onClick={(e) => handleDeleteClick(e, project)}
+                className="absolute bottom-4 right-4 px-3 py-1 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 hover:text-red-700 transition text-sm flex items-center gap-1"
+              >
+                <i className="ri-delete-bin-line"></i>
+                Delete
+              </button>
             </div>
           ))
         ) : (
@@ -142,6 +185,54 @@ function Home() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmation && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 relative animate-fade-in border border-gray-200">
+            {/* Modal Header */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-semibold text-red-600">Delete Project</h2>
+              <button
+                onClick={() => {
+                  setShowDeleteConfirmation(false);
+                  setProjectToDelete(null);
+                }}
+                className="text-gray-500 hover:text-red-500 transition"
+              >
+                <i className="ri-close-line text-2xl"></i>
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="mb-6">
+              <p className="text-gray-700">
+                Are you sure you want to delete <span className="font-semibold">{projectToDelete?.name}</span>? 
+                This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirmation(false);
+                  setProjectToDelete(null);
+                }}
+                className="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteProject}
+                className="px-5 py-2 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 transition shadow-sm text-sm"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -75,7 +75,7 @@ function ProjectPage() {
   const { user } = useUser();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  const [fileTree, setFileTree] = useState({});
+  const [fileTree, setFileTree] = useState(initialProject.fileTree);
   const [selectedFile, setSelectedFile] = useState("app.js");
   const [fileContent, setFileContent] = useState("");
   const messagesEndRef = useRef(null);
@@ -429,6 +429,11 @@ function ProjectPage() {
   
   const handleRemoveCollaborator = () => {
     if (!selectedRemoveUserIds.length || !project) return;
+
+    if (selectedRemoveUserIds.includes(user._id)) {
+      console.warn('You cannot remove yourself from the project.');
+      return;
+    }
     
     axios.put('/projects/remove-user', {
       projectId: project._id,
@@ -629,7 +634,8 @@ function ProjectPage() {
         fileTree: updatedFileTree
       });
       
-      if (response.data.success) {
+      
+      if (response.request.status === 200) {
         console.log("File tree saved successfully");
         
         // You could show a success notification here
@@ -1157,25 +1163,25 @@ function ProjectPage() {
                   <p className="text-gray-500 text-center py-4">No collaborators to remove</p>
                 ) : (
                   <ul className="space-y-2">
-                    {project.users.map((user) => (
-                      user._id !== project.owner && (
-                        <li key={user._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
+                    {project.users.map((userr) => (
+                      userr._id !== user._id && (
+                        <li key={userr._id} className="flex items-center p-2 hover:bg-gray-50 rounded-lg">
                           <input
                             type="checkbox"
-                            id={`remove-user-${user._id}`}
-                            checked={selectedRemoveUserIds.includes(user._id)}
+                            id={`remove-user-${userr._id}`}
+                            checked={selectedRemoveUserIds.includes(userr._id)}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setSelectedRemoveUserIds([...selectedRemoveUserIds, user._id]);
+                                setSelectedRemoveUserIds([...selectedRemoveUserIds, userr._id]);
                               } else {
-                                setSelectedRemoveUserIds(selectedRemoveUserIds.filter(id => id !== user._id));
+                                setSelectedRemoveUserIds(selectedRemoveUserIds.filter(id => id !== userr._id));
                               }
                             }}
                             className="mr-3 rounded text-red-600 focus:ring-red-500"
                           />
-                          <label htmlFor={`remove-user-${user._id}`} className="flex-1 cursor-pointer">
-                            <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                            <p className="text-xs text-gray-500">{user.email}</p>
+                          <label htmlFor={`remove-user-${userr._id}`} className="flex-1 cursor-pointer">
+                            <p className="text-sm font-medium text-gray-700">{userr.name}</p>
+                            <p className="text-xs text-gray-500">{userr.email}</p>
                           </label>
                         </li>
                       )

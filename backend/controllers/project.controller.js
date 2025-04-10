@@ -141,10 +141,77 @@ const updateFileTree = async(req , res) => {
     }
 }
 
+const removeUserFromProject = async(req , res) => {
+    const errors = validationResult(req);
+
+    if(!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const {projectId , users} = req.body;
+
+        const loggedInUser = await userModel.findOne({
+            email : req.user.email
+        });
+
+        const project = await projectService.removeUserFromProject({
+            projectId,
+            users,
+            userId : loggedInUser._id
+        })
+
+        return res.status(200).json({
+            project,
+        });
+
+    } catch (err) {
+        console.log(err)
+        res.status(400).json({ error: err.message })
+    }
+}
+
+const deleteProjectController = async (req , res) => {
+    const errors = validationResult(req);
+
+    if(!errors.isEmpty()) {
+        return res.status(400).json({
+            errors : errors.array()
+        });
+    }
+
+    try {
+
+        const { projectId } = req.body;
+        console.log(projectId);
+        const loggedInUser = await userModel.findOne({
+            email : req.user.email,
+        })
+
+        const userId = loggedInUser?._id;
+
+        const removedProject = await projectService.deleteProject({projectId , userId});
+
+        res.status(201).json({
+            removedProject
+        });
+    }
+    catch (err) {
+        console.log(err , "cannot delete the project");
+        res.status(400).json({
+            error : err
+        })
+    }
+}
+
 module.exports = {
     createProjectController,
     getAllProjects,
     addUserToProject,
     getProjectById,
-    updateFileTree
+    updateFileTree,
+    updateFileTree,
+    removeUserFromProject,
+    deleteProjectController
+
 }
