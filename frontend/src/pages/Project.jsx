@@ -75,7 +75,7 @@ function ProjectPage() {
   const { user } = useUser();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  const [fileTree, setFileTree] = useState(null);
+  const [fileTree, setFileTree] = useState({});
   const [selectedFile, setSelectedFile] = useState("app.js");
   const [fileContent, setFileContent] = useState("");
   const messagesEndRef = useRef(null);
