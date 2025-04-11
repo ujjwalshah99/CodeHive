@@ -75,7 +75,7 @@ function ProjectPage() {
   const { user } = useUser();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  const [fileTree, setFileTree] = useState(initialProject.fileTree || null);
+  const [fileTree, setFileTree] = useState(null);
   const [selectedFile, setSelectedFile] = useState("app.js");
   const [fileContent, setFileContent] = useState("");
   const messagesEndRef = useRef(null);
@@ -94,7 +94,6 @@ function ProjectPage() {
 
   const consoleOutputRef = useRef(null);
   //const isEditable = selectedFile && fileTree[selectedFile] && fileTree[selectedFile].file;
-
 
   useEffect(() => {
     if (consoleOutputRef.current) {
@@ -381,6 +380,7 @@ function ProjectPage() {
 
   // Check viewport size and adjust sidebar visibility
   useEffect(() => {
+    setFileTree(initialProject.fileTree)
     const handleResize = () => {
       if (window.innerWidth < 768) {
         setShowFileSidebar(false);
