@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "start": "serve -s dist -c dist\\serve.json",
-    "build": "vite build && copy serve.json dist\\serve.json",
+    "start": "serve -s dist -c ../serve.json",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
