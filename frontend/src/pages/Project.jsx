@@ -358,12 +358,15 @@ function ProjectPage() {
       const updatedFileTree = {};
       
       // Copy all properties without mutation
-      Object.keys(fileTree).forEach(key => {
-        updatedFileTree[key] = { ...fileTree[key] };
-        if (fileTree[key].file) {
-          updatedFileTree[key].file = { ...fileTree[key].file };
-        }
-      });
+      if (fileTree && typeof fileTree === 'object') {
+        Object.keys(fileTree).forEach(key => {
+          updatedFileTree[key] = { ...fileTree[key] };
+          if (fileTree[key].file) {
+            updatedFileTree[key].file = { ...fileTree[key].file };
+          }
+        });
+      }
+      
       
       // Only update the current file's content
       if (updatedFileTree[selectedFile] && updatedFileTree[selectedFile].file) {
@@ -857,7 +860,7 @@ function ProjectPage() {
               </div>
               <div className="flex-1 overflow-y-auto p-2">
                 <ul className="space-y-1">
-                  {Object.keys(fileTree).map((fileName) => (
+                  {fileTree && Object.keys(fileTree).map((fileName) => (
                     <li 
                       key={fileName}
                       className={`px-3 py-2 rounded-lg text-sm cursor-pointer ${
