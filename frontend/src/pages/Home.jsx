@@ -104,11 +104,11 @@ function Home() {
         {projects.length > 0 ? (
           projects.map((project) => (
             <div
+              onClick={() => navigate('/project', { state: { project } })}
               key={project._id}
               className="bg-white border border-slate-200 rounded-2xl p-6 shadow-md hover:shadow-xl hover:scale-[1.01] transition cursor-pointer relative"
             >
-              <div 
-                onClick={() => navigate('/project', { state: { project } })}
+              <div
                 className="mb-8"
               >
                 <h3 className="text-xl font-semibold text-slate-800 mb-3">{project.name}</h3>
