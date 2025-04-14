@@ -9,7 +9,6 @@ const cors = require("cors");
 
 connect();
 const app = express();
-const __dirname = this.path.
 
 app.use(cors());
 
@@ -21,8 +20,6 @@ app.use(cookieParser());
 app.use("/users" , userRoutes);
 app.use("/projects" , projectRoutes);
 app.use("/ai" , aiRoutes);
-
-app.use(express.static(path.join(__dirname, 'dist')));
 
 
 app.get("/" , (req,res)=> {
